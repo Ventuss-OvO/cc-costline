@@ -4,7 +4,7 @@
 
 为 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 打造的增强状态栏 — 在终端中显示费用追踪、使用限额、智谱用量和排行榜排名。
 
-![cc-costline 截图](screenshot.png)
+![cc-costline 截图](img/status-zhipu.png)
 
 ```
 526.3k $16.3 · 57% glm-4.7 / 7d:$137 / ZHIPU:124.0M ~ $74.4 · 5h:27% · MCP:10/100 · M:380.5M ~ $228

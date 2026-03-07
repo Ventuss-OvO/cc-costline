@@ -4,7 +4,7 @@
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 向けの拡張ステータスライン — コスト追跡、使用制限、Zhipu GLM 使用量、リーダーボードランキングをターミナルに表示します。
 
-![cc-costline スクリーンショット](screenshot.png)
+![cc-costline スクリーンショット](img/status-zhipu.png)
 
 ```
 526.3k $16.3 · 57% glm-4.7 / 7d:$137 / ZHIPU:124.0M ~ $74.4 · 5h:27% · MCP:10/100 · M:380.5M ~ $228

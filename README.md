@@ -4,7 +4,7 @@
 
 Enhanced statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) — adds cost tracking, usage limits, Zhipu GLM usage, and leaderboard rank to your terminal.
 
-![cc-costline screenshot](screenshot.png)
+![cc-costline screenshot](img/status-zhipu.png)
 
 ```
 526.3k $16.3 · 57% glm-4.7 / 7d:$137 / ZHIPU:124.0M ~ $74.4 · 5h:27% · MCP:10/100 · M:380.5M ~ $228
