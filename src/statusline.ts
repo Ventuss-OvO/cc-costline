@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { execSync } from "node:child_process";
 import { readCache, readConfig } from "./cache.js";
+import { getZhipuUsage } from "./zhipu.js";
 
 // ANSI colors (matching original statusline.sh)
 const FG_GRAY      = "\x1b[38;5;245m";
@@ -159,7 +160,7 @@ function getClaudeUsage(): { fiveHour: number; sevenDay: number; fiveHourResetsA
   }
 }
 
-export function render(input: string): string {
+export async function render(input: string): Promise<string> {
   let data: any;
   try {
     data = JSON.parse(input);
@@ -221,8 +222,14 @@ export function render(input: string): string {
   }
   if (cache) {
     const period = config.period || "30d";
-    const periodCost = period === "7d" ? cache.cost7d : cache.cost30d;
-    usageParts.push(`${y}${period}:${formatCost(periodCost)}${r}`);
+
+    if (period === "both") {
+      usageParts.push(`${y}7d:${formatCost(cache.cost7d)}${r}`);
+      usageParts.push(`${y}30d:${formatCost(cache.cost30d)}${r}`);
+    } else if (period !== "none") {
+      const periodCost = period === "7d" ? cache.cost7d : cache.cost30d;
+      usageParts.push(`${y}${period}:${formatCost(periodCost)}${r}`);
+    }
   }
   if (usageParts.length > 0) {
     segments.push(usageParts.join(` ${g}·${r} `));
@@ -235,5 +242,84 @@ export function render(input: string): string {
     segments.push(`${rc}#${ccclubRank.rank} ${formatCost(ccclubRank.cost)}${r}`);
   }
 
+  // ZHIPU usage (智谱用量)
+  const zhipuUsage = await getZhipuUsage();
+  if (zhipuUsage && config.showZhipu !== false) {
+    const zhipuParts: string[] = [];
+
+    // 模型使用量 + 成本（24小时）
+    if (zhipuUsage.modelUsage) {
+      const { totalTokens, cost } = zhipuUsage.modelUsage;
+      const tokens = formatTokens(totalTokens);
+      const costStr = formatCost(cost);
+      zhipuParts.push(`${g}ZHIPU:${tokens} ~ ${costStr}${r}`);
+    }
+
+    // 5小时 Token 限制 + 刷新时间
+    if (zhipuUsage.quotaLimit?.tokens5h) {
+      const { percentage, resetsAt } = zhipuUsage.quotaLimit.tokens5h;
+      const color = ctxColor(percentage);
+
+      if (percentage >= 100 && resetsAt) {
+        // 显示倒计时
+        const countdown = formatResetTime(resetsAt);
+        zhipuParts.push(`${color}5h:${countdown}${r}`);
+      } else if (config.showResetTime && resetsAt) {
+        // 显示百分比 + 刷新时间
+        const resetTime = formatResetTime(resetsAt);
+        zhipuParts.push(`${color}5h:${percentage}% (${resetTime})${r}`);
+      } else {
+        // 只显示百分比
+        zhipuParts.push(`${color}5h:${percentage}%${r}`);
+      }
+    }
+
+    // MCP 月度使用量
+    if (zhipuUsage.quotaLimit?.mcpMonthly) {
+      const { current, limit, percentage } = zhipuUsage.quotaLimit.mcpMonthly;
+      const color = ctxColor(percentage);
+      zhipuParts.push(`${color}MCP:${current}/${limit}${r}`);
+    }
+
+    // 本月累计使用量
+    if (zhipuUsage.monthlyUsage) {
+      const { totalTokens, cost } = zhipuUsage.monthlyUsage;
+      const tokens = formatTokens(totalTokens);
+      const costStr = formatCost(cost);
+      zhipuParts.push(`${y}M:${tokens} ~ ${costStr}${r}`);
+    }
+
+    if (zhipuParts.length > 0) {
+      segments.push(zhipuParts.join(` ${g}·${r} `));
+    }
+  }
+
   return " " + segments.join(` ${gr}/${r} `);
+}
+
+// 刷新时间格式化函数（显示具体时间点）
+function formatResetTime(resetsAt: number): string {
+  // 处理不同级别的时间戳
+  let resetsAtMs = resetsAt;
+  
+  if (resetsAt < 10000000000) {
+    // 如果是秒级时间戳（小于100亿），转换为毫秒
+    resetsAtMs = resetsAt * 1000;
+  } else if (resetsAt > 1000000000000000) {
+    // 如果是微秒级时间戳（大于1000万亿），转换为毫秒
+    resetsAtMs = resetsAt / 1000;
+  }
+  // 否则假设已经是毫秒级时间戳
+
+  const resetDate = new Date(resetsAtMs);
+  
+  // 检查时间戳是否合理
+  if (isNaN(resetDate.getTime())) {
+    return "02:00"; // 默认返回凌晨2点
+  }
+
+  // 格式化为 HH:MM 格式
+  const hours = String(resetDate.getHours()).padStart(2, '0');
+  const minutes = String(resetDate.getMinutes()).padStart(2, '0');
+  return `${hours}:${minutes}`;
 }

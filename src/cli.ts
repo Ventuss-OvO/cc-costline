@@ -76,7 +76,7 @@ function cmdInstall(): void {
   // 3. Create config dir + default config
   mkdirSync(CACHE_DIR, { recursive: true });
   if (!existsSync(join(CACHE_DIR, "config.json"))) {
-    writeConfig({ period: "7d" });
+    writeConfig({ period: "7d", showZhipu: true, showResetTime: false });
   }
 
   // 4. Initial refresh
@@ -116,21 +116,45 @@ function cmdUninstall(): void {
 
 function cmdConfig(args: string[]): void {
   const periodIdx = args.indexOf("--period");
-  if (periodIdx === -1 || !args[periodIdx + 1]) {
-    const config = readConfig();
+  const zhipuIdx = args.indexOf("--zhipu");
+  const resetTimeIdx = args.indexOf("--reset-time");
+
+  const config = readConfig();
+
+  // Handle --period
+  if (periodIdx !== -1 && args[periodIdx + 1]) {
+    const period = args[periodIdx + 1];
+    if (!["none", "7d", "30d", "both"].includes(period)) {
+      console.error("Invalid period. Use: none, 7d, 30d, or both");
+      process.exit(1);
+    }
+    config.period = period as "none" | "7d" | "30d" | "both";
+  }
+
+  // Handle --zhipu
+  if (zhipuIdx !== -1 && args[zhipuIdx + 1]) {
+    const value = args[zhipuIdx + 1];
+    config.showZhipu = value === "true";
+  }
+
+  // Handle --reset-time
+  if (resetTimeIdx !== -1 && args[resetTimeIdx + 1]) {
+    const value = args[resetTimeIdx + 1];
+    config.showResetTime = value === "true";
+  }
+
+  // Show usage if no valid args
+  if (periodIdx === -1 && zhipuIdx === -1 && resetTimeIdx === -1) {
     console.log("Current config:", JSON.stringify(config, null, 2));
-    console.log("\nUsage: cc-costline config --period <7d|30d|both>");
+    console.log("\nUsage:");
+    console.log("  cc-costline config --period <none|7d|30d|both>");
+    console.log("  cc-costline config --zhipu <true|false>");
+    console.log("  cc-costline config --reset-time <true|false>");
     return;
   }
 
-  const period = args[periodIdx + 1];
-  if (!["7d", "30d", "both"].includes(period)) {
-    console.error("Invalid period. Use: 7d, 30d, or both");
-    process.exit(1);
-  }
-
-  writeConfig({ period: period as "7d" | "30d" | "both" });
-  console.log(`✓ Period set to: ${period}`);
+  writeConfig(config);
+  console.log(`✓ Config updated: period=${config.period}, showZhipu=${config.showZhipu}, showResetTime=${config.showResetTime}`);
 }
 
 function cmdRefresh(): void {
@@ -145,10 +169,10 @@ function cmdRefresh(): void {
   );
 }
 
-function cmdRender(): void {
+async function cmdRender(): Promise<void> {
   const input = readStdin();
   if (!input.trim()) return;
-  const output = render(input);
+  const output = await render(input);
   if (output) process.stdout.write(output);
 }
 

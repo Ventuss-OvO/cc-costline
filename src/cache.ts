@@ -13,7 +13,9 @@ export interface CacheData {
 }
 
 export interface ConfigData {
-  period: "7d" | "30d" | "both";
+  period: "none" | "7d" | "30d" | "both";
+  showZhipu: boolean;
+  showResetTime: boolean;  // 是否显示 5h 配额刷新时间
 }
 
 export function readCache(): CacheData | null {
@@ -35,7 +37,7 @@ export function readConfig(): ConfigData {
     const raw = readFileSync(CONFIG_FILE, "utf-8");
     return JSON.parse(raw) as ConfigData;
   } catch {
-    return { period: "7d" };
+    return { period: "7d", showZhipu: true, showResetTime: false };
   }
 }
 
