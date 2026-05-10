@@ -64,9 +64,9 @@ cc-costline config --period both # Afficher les deux périodes
 1. `install` configure `~/.claude/settings.json` — définit la commande statusline et ajoute des hooks de fin de session. Vos paramètres existants sont préservés.
 2. `render` est appelé par Claude Code à chaque tour. Il lit les totaux de tokens depuis stdin quand Claude Code les fournit, puis lit trois caches (aucun HTTP, aucun scan complet du répertoire) :
    - **Coût local** → `~/.cc-costline/cache.json`
-   - **Limites d'utilisation** → `/tmp/sl-claude-usage`
-   - **Rang ccclub** → `/tmp/sl-ccclub-rank`
-3. Si un cache est obsolète, `render` lance un sous-processus détaché `cc-costline refresh-bg` qui rafraîchit les données en arrière-plan. `/tmp/sl-refresh.lock` empêche les rafraîchissements concurrents entre plusieurs fenêtres Claude Code, et `/tmp/sl-refresh.last` limite les spawns à un toutes les 30 s.
+   - **Limites d'utilisation** → `<os.tmpdir()>/sl-claude-usage`
+   - **Rang ccclub** → `<os.tmpdir()>/sl-ccclub-rank`
+3. Si un cache est obsolète, `render` lance un sous-processus détaché `cc-costline refresh-bg` qui rafraîchit les données en arrière-plan. `<os.tmpdir()>/sl-refresh.lock` empêche les rafraîchissements concurrents entre plusieurs fenêtres Claude Code, et `<os.tmpdir()>/sl-refresh.last` limite les spawns à un toutes les 30 s.
 4. Le rafraîchissement de fond respecte les TTL de chaque source :
    - **Coût local** (TTL 2 min) : scan incrémental — cache par fichier (`mtime+size`), réutilise les entrées inchangées (~25 ms typique vs ~2 s à froid sur 1000+ fichiers jsonl)
    - **Limites d'utilisation** (retry 5 min, sensible au token) : récupère depuis `api.anthropic.com/api/oauth/usage`. Détecte la rotation du token OAuth pour relancer immédiatement (nouveau token = nouveau quota de débit). Les données périmées persistent en cas d'échec.

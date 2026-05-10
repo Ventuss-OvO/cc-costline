@@ -49,4 +49,4 @@ test/
 
 - Keep zero runtime dependencies.
 - All formatting functions should be pure and tested.
-- Cache files go to `/tmp/sl-*`, config to `~/.cc-costline/`.
+- Cache files go to `<os.tmpdir()>/sl-*` (cross-platform: `/tmp` on Linux/macOS, `%TEMP%` on Windows), config to `~/.cc-costline/`.
