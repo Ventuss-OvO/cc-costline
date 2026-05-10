@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync, utimesSync, closeSync, openSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { readCache, writeCache } from "./cache.js";
 import { collectCosts } from "./collector.js";
@@ -11,8 +11,8 @@ const ANTHROPIC_TTL_MS = 300_000;
 // ccclub rank: self-hosted, no strict limits — refresh more aggressively for visible data.
 const CCCLUB_TTL_MS = 90_000;
 
-const REFRESH_LOCK = "/tmp/sl-refresh.lock";
-const REFRESH_LAST = "/tmp/sl-refresh.last";
+const REFRESH_LOCK = join(tmpdir(), "sl-refresh.lock");
+const REFRESH_LAST = join(tmpdir(), "sl-refresh.last");
 const LOCK_STALE_MS = 60_000;
 
 function acquireLock(): boolean {
@@ -68,8 +68,8 @@ function refreshLocalCost(transcriptPath: string): void {
 }
 
 async function refreshClaudeUsage(): Promise<void> {
-  const cacheFile = "/tmp/sl-claude-usage";
-  const hitFile = "/tmp/sl-claude-usage-hit";
+  const cacheFile = join(tmpdir(), "sl-claude-usage");
+  const hitFile = join(tmpdir(), "sl-claude-usage-hit");
   const now = Date.now();
 
   let staleData: { fiveHour: number; sevenDay: number; fiveHourResetsAt?: number } | null = null;
@@ -84,15 +84,32 @@ async function refreshClaudeUsage(): Promise<void> {
     } catch {}
   }
 
+  // Get current token — cross-platform:
+  //   macOS: Keychain first (Claude Code 2.x), then file fallback
+  //   Windows/Linux: ~/.claude/.credentials.json (Claude Code stores tokens there)
   let accessToken = "";
   try {
-    const username = process.env.USER || process.env.USERNAME;
-    if (!username) return;
-    const credentialsJSON = execFileSync(
-      "security",
-      ["find-generic-password", "-s", "Claude Code-credentials", "-a", username, "-w"],
-      { encoding: "utf-8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] },
-    ).trim();
+    let credentialsJSON = "";
+    if (process.platform === "darwin") {
+      try {
+        const username = process.env.USER || process.env.USERNAME;
+        if (username) {
+          credentialsJSON = execFileSync(
+            "security",
+            ["find-generic-password", "-s", "Claude Code-credentials", "-a", username, "-w"],
+            { encoding: "utf-8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] },
+          ).trim();
+        }
+      } catch {
+        // Keychain miss — fall through to file fallback
+      }
+    }
+    if (!credentialsJSON) {
+      const credPath = join(homedir(), ".claude", ".credentials.json");
+      if (existsSync(credPath)) {
+        credentialsJSON = readFileSync(credPath, "utf-8");
+      }
+    }
     if (!credentialsJSON) return;
     const credentials = JSON.parse(credentialsJSON);
     accessToken = credentials.claudeAiOauth?.accessToken || "";
@@ -123,7 +140,7 @@ async function refreshClaudeUsage(): Promise<void> {
     });
     if (!response.ok) return;
     const data = await response.json();
-    try { writeFileSync("/tmp/sl-claude-usage-raw", JSON.stringify(data, null, 2), "utf-8"); } catch {}
+    try { writeFileSync(join(tmpdir(), "sl-claude-usage-raw"), JSON.stringify(data, null, 2), "utf-8"); } catch {}
 
     const parseUtil = (val: any): number => {
       if (typeof val === "number") return Math.round(val);
@@ -162,7 +179,7 @@ async function refreshClaudeUsage(): Promise<void> {
 async function refreshCcclubRank(): Promise<void> {
   const configPath = join(homedir(), ".ccclub", "config.json");
   if (!existsSync(configPath)) return;
-  const cacheFile = "/tmp/sl-ccclub-rank";
+  const cacheFile = join(tmpdir(), "sl-ccclub-rank");
   const now = Date.now();
 
   let staleData: { rank: number; total: number; cost: number } | null = null;

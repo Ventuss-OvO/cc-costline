@@ -1,5 +1,7 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { readCache, readConfig } from "./cache.js";
 import type { CacheData } from "./cache.js";
 
@@ -10,7 +12,7 @@ const CACHE_TTL_MS = 120_000;
 // refresh-bg internally honors per-API TTLs (Anthropic 5min, ccclub 90s) so this is just
 // a coarse "don't fork node every turn" gate.
 const REFRESH_SPAWN_THROTTLE_MS = 30_000;
-const REFRESH_LAST_MARKER = "/tmp/sl-refresh.last";
+const REFRESH_LAST_MARKER = join(tmpdir(), "sl-refresh.last");
 
 // ANSI colors (matching original statusline.sh)
 const FG_GRAY      = "\x1b[38;5;245m";
@@ -79,20 +81,20 @@ export function rankColor(rank: number): string {
   return FG_CYAN;
 }
 
-// Read-only: usage data from /tmp cache. Refresh is done by `cc-costline refresh-bg`.
+// Read-only: usage data from temp cache. Refresh is done by `cc-costline refresh-bg`.
 function readUsageCache(): { fiveHour: number; sevenDay: number; fiveHourResetsAt?: number } | null {
   try {
-    const cached = JSON.parse(readFileSync("/tmp/sl-claude-usage", "utf-8"));
+    const cached = JSON.parse(readFileSync(join(tmpdir(), "sl-claude-usage"), "utf-8"));
     return cached.data ?? null;
   } catch {
     return null;
   }
 }
 
-// Read-only: ccclub rank from /tmp cache.
+// Read-only: ccclub rank from temp cache.
 function readRankCache(): { rank: number; total: number; cost: number } | null {
   try {
-    const cached = JSON.parse(readFileSync("/tmp/sl-ccclub-rank", "utf-8"));
+    const cached = JSON.parse(readFileSync(join(tmpdir(), "sl-ccclub-rank"), "utf-8"));
     return cached.data ?? null;
   } catch {
     return null;
@@ -185,36 +187,40 @@ export function render(input: string): string {
 
   const segments: string[] = [];
 
-  // tokens $cost · ctx% Model
-  segments.push(`${formatTokens(totalTokens)} ${y}${formatCost(cost)}${r} ${g}·${r} ${cx}${contextPct}%${r} ${m}${model}${r}`);
+  // tokens ~ $cost / ctx% by Model
+  segments.push(`${formatTokens(totalTokens)} ${g}~${r} ${y}${formatCost(cost)}${r} ${g}/${r} ${cx}${contextPct}%${r} ${g}by${r} ${m}${model}${r}`);
 
-  // 5h:100% · 7d:26% · 30d:$960
-  const usageParts: string[] = [];
+  // 5h: X% / 7d: Y%  |  30d: $Z   (live usage and period cost are separate segments)
+  const liveUsageParts: string[] = [];
   if (claudeUsage) {
     if (claudeUsage.fiveHour >= 100 && claudeUsage.fiveHourResetsAt) {
       const countdown = formatCountdown(claudeUsage.fiveHourResetsAt);
-      usageParts.push(`${FG_RED}5h:${countdown}${r}`);
+      liveUsageParts.push(`${FG_RED}5h: ${countdown}${r}`);
     } else if (claudeUsage.fiveHour >= 100) {
-      usageParts.push(`${FG_RED}5h:-00:00${r}`);
+      liveUsageParts.push(`${FG_RED}5h: -00:00${r}`);
     } else {
       const c5 = ctxColor(claudeUsage.fiveHour);
-      usageParts.push(`${c5}5h:${claudeUsage.fiveHour}%${r}`);
+      liveUsageParts.push(`${c5}5h: ${claudeUsage.fiveHour}%${r}`);
     }
     const c7 = ctxColor(claudeUsage.sevenDay);
-    usageParts.push(`${c7}7d:${claudeUsage.sevenDay}%${r}`);
+    liveUsageParts.push(`${c7}7d: ${claudeUsage.sevenDay}%${r}`);
   }
+  const periodCostParts: string[] = [];
   if (cache) {
     const period = config.period || "30d";
     if (period === "both") {
-      usageParts.push(`${y}7d:${formatCost(cache.cost7d)}${r}`);
-      usageParts.push(`${y}30d:${formatCost(cache.cost30d)}${r}`);
+      periodCostParts.push(`${y}7d: ${formatCost(cache.cost7d)}${r}`);
+      periodCostParts.push(`${y}30d: ${formatCost(cache.cost30d)}${r}`);
     } else {
       const periodCost = period === "7d" ? cache.cost7d : cache.cost30d;
-      usageParts.push(`${y}${period}:${formatCost(periodCost)}${r}`);
+      periodCostParts.push(`${y}${period}: ${formatCost(periodCost)}${r}`);
     }
   }
-  if (usageParts.length > 0) {
-    segments.push(usageParts.join(` ${g}·${r} `));
+  if (liveUsageParts.length > 0) {
+    segments.push(liveUsageParts.join(` ${g}/${r} `));
+  }
+  if (periodCostParts.length > 0) {
+    segments.push(periodCostParts.join(` ${g}/${r} `));
   }
 
   // #2 $53.6
@@ -223,5 +229,5 @@ export function render(input: string): string {
     segments.push(`${rc}#${ccclubRank.rank} ${formatCost(ccclubRank.cost)}${r}`);
   }
 
-  return " " + segments.join(` ${gr}/${r} `);
+  return " " + segments.join(` ${gr}|${r} `);
 }
