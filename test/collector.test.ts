@@ -50,14 +50,24 @@ describe("collectCosts", () => {
     const result = collectCosts(tmpDir);
     assert.equal(result.cost7d, 0);
     assert.equal(result.cost30d, 0);
-    assert.equal(result.scanFailed, false);
+    assert.equal(result.ok, true, "empty dir is a successful scan, not a failure");
   });
 
   it("returns zeros for non-existent directory", () => {
     const result = collectCosts(join(tmpDir, "nope"));
     assert.equal(result.cost7d, 0);
     assert.equal(result.cost30d, 0);
-    assert.equal(result.scanFailed, undefined);
+    // ENOENT is treated as "no data yet", not a catastrophic failure — the
+    // caller may overwrite cache with 0 in that case.
+    assert.equal(result.ok, true);
+  });
+
+  it("marks a successful scan with ok=true", () => {
+    const dir = join(tmpDir, "project");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "session.jsonl"), jsonlLine() + "\n");
+    const result = collectCosts(tmpDir);
+    assert.equal(result.ok, true);
   });
 
   it("calculates cost from a single jsonl file", () => {

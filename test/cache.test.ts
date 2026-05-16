@@ -62,4 +62,16 @@ describe("writeConfig + readConfig roundtrip", () => {
     writeConfig(config, tmpDir);
     assert.deepEqual(readConfig(tmpDir), config);
   });
+
+  it("falls back to default when stored period is invalid", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    writeFileSync(join(tmpDir, "config.json"), JSON.stringify({ period: "garbage" }));
+    assert.deepEqual(readConfig(tmpDir), { period: "7d" });
+  });
+
+  it("falls back to default when period is missing", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    writeFileSync(join(tmpDir, "config.json"), JSON.stringify({ other: "field" }));
+    assert.deepEqual(readConfig(tmpDir), { period: "7d" });
+  });
 });

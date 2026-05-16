@@ -43,7 +43,7 @@ npm i -g cc-costline@latest
 
 ### Optional integrations
 
-- **Claude usage limits** — reads OAuth credentials from macOS Keychain automatically. Just `claude login` and it works.
+- **Claude usage limits** — reads OAuth credentials from macOS Keychain (with `~/.claude/.credentials.json` fallback on Windows/Linux). Just `claude login` and it works.
 - **ccclub leaderboard** — install [ccclub](https://github.com/mazzzystar/ccclub) (`npm i -g ccclub && ccclub init`). Rank appears automatically.
 
 Both are zero-config: if not available, the segment is silently omitted.

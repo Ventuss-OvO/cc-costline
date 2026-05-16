@@ -125,6 +125,41 @@ describe("render", () => {
     }
   });
 
+  it("counts cache tokens (creation + read) toward total when falling back to transcript", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "cc-render-test-"));
+    try {
+      const transcriptPath = join(tmpDir, "session.jsonl");
+      const lines = [
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            usage: {
+              input_tokens: 1000,
+              output_tokens: 500,
+              cache_creation_input_tokens: 2000,
+              cache_read_input_tokens: 6500,
+            },
+          },
+        }),
+      ].join("\n");
+      writeFileSync(transcriptPath, lines + "\n");
+
+      const input = JSON.stringify({
+        cost: { total_cost_usd: 1.5 },
+        model: { display_name: "Sonnet 4.5" },
+        context_window: { used_percentage: 25 },
+        transcript_path: transcriptPath,
+      });
+      const output = render(input);
+      const plain = stripAnsi(output);
+
+      // 1000+500+2000+6500 = 10000 → "10.0k"
+      assert.ok(plain.includes("10.0k"), `should sum all four token types, got: ${plain}`);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("shows 0 tokens when no transcript", () => {
     const input = JSON.stringify({
       cost: { total_cost_usd: 0.5 },

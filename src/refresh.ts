@@ -2,8 +2,8 @@ import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync, utimesSy
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
-import { readCache, writeCache } from "./cache.js";
+import { createHash, randomUUID } from "node:crypto";
+import { readCache, writeCache, atomicWriteFileSync } from "./cache.js";
 import { collectCosts } from "./collector.js";
 import { shouldRefreshLocalCostCache } from "./statusline.js";
 
@@ -14,84 +14,219 @@ const CCCLUB_TTL_MS = 90_000;
 
 const REFRESH_LOCK = join(tmpdir(), "sl-refresh.lock");
 const REFRESH_LAST = join(tmpdir(), "sl-refresh.last");
-const LOCK_STALE_MS = 60_000;
+// Lock staleness: refreshAll is bounded by ~15s (local scan + 2× 5s HTTP timeouts),
+// so a lock older than 5 minutes is almost certainly orphaned. The longer window
+// also shrinks the TOCTOU race where a slow refresh could have its lock stolen
+// just before releaseLock runs — practically unreachable now.
+const HTTP_TIMEOUT_MS = 5_000;
+const LOCK_STALE_MS = 5 * 60 * 1_000;
 
-function acquireLock(): boolean {
+// Custom UA: avoids Anthropic's claude-code UA rate limiter and identifies the source clearly.
+const USER_AGENT = "cc-costline";
+
+// Module-level state for the ownership-verified lock. Only one refreshAll runs per process.
+let LOCK_OWNER = "";
+
+export interface UsageData {
+  fiveHour: number;
+  sevenDay: number;
+  fiveHourResetsAt?: number;
+}
+
+export interface RankData {
+  rank: number;
+  total: number;
+  cost: number;
+}
+
+// ─── Lock primitives ──────────────────────────────────────────────────────
+
+/**
+ * Acquire an ownership-verified refresh lock.
+ *
+ * Writes a unique `${pid}:${uuid}` token into the lock file so that
+ * `releaseLock` can verify it owns the lock before unlinking.
+ *
+ * Returns true on success, false if another (non-stale) lock is held.
+ */
+export function acquireLock(lockPath: string = REFRESH_LOCK, staleMs: number = LOCK_STALE_MS): boolean {
   try {
-    if (existsSync(REFRESH_LOCK)) {
+    if (existsSync(lockPath)) {
       try {
-        const stat = statSync(REFRESH_LOCK);
-        if (Date.now() - stat.mtimeMs < LOCK_STALE_MS) return false;
-        unlinkSync(REFRESH_LOCK);
+        const stat = statSync(lockPath);
+        if (Date.now() - stat.mtimeMs < staleMs) return false;
+        unlinkSync(lockPath);
       } catch {
         return false;
       }
     }
-    const fd = openSync(REFRESH_LOCK, "wx");
+    const owner = `${process.pid}:${randomUUID()}`;
+    const fd = openSync(lockPath, "wx");
     try {
-      writeFileSync(fd, String(process.pid));
+      writeFileSync(fd, owner);
     } finally {
       closeSync(fd);
     }
+    LOCK_OWNER = owner;
     return true;
   } catch {
     return false;
   }
 }
 
-function releaseLock(): void {
-  try { unlinkSync(REFRESH_LOCK); } catch {}
+/**
+ * Release the refresh lock IFF we still own it, then touch the spawn-throttle marker.
+ *
+ * Verifies ownership by comparing the lock file's contents against the token we
+ * wrote in `acquireLock`. If another process has stolen the lock (after our token
+ * went stale), we leave their lock alone — protects against the original race
+ * where any process could delete any other process's live lock.
+ *
+ * Always touches REFRESH_LAST so that the spawn-throttle in statusline.ts
+ * progresses regardless of whether we owned the lock at release time.
+ */
+export function releaseLock(lockPath: string = REFRESH_LOCK, markerPath: string = REFRESH_LAST): void {
+  try {
+    const contents = readFileSync(lockPath, "utf-8");
+    if (contents === LOCK_OWNER && LOCK_OWNER !== "") {
+      unlinkSync(lockPath);
+    }
+  } catch {
+    // Lock might be gone, unreadable, or never existed — nothing to release.
+  }
+  LOCK_OWNER = "";
+  touchMarker(markerPath);
+}
+
+function touchMarker(markerPath: string): void {
   try {
     const now = new Date();
-    if (!existsSync(REFRESH_LAST)) {
-      writeFileSync(REFRESH_LAST, "");
+    if (!existsSync(markerPath)) {
+      writeFileSync(markerPath, "");
     }
-    utimesSync(REFRESH_LAST, now, now);
+    utimesSync(markerPath, now, now);
   } catch {}
 }
 
-function refreshLocalCost(transcriptPath: string): void {
-  const cache = readCache();
-  if (!shouldRefreshLocalCostCache(cache, transcriptPath)) return;
-  try {
-    const result = collectCosts(undefined, cache?.files);
-    // Keep stale data only when the scan itself failed. A successful scan that
-    // returns zero should clear old rolling-window totals.
-    if (!result.scanFailed || !cache) {
-      writeCache({
-        cost7d: result.cost7d,
-        cost30d: result.cost30d,
-        updatedAt: new Date().toISOString(),
-        files: result.files,
-      });
-    }
-  } catch {}
-}
+// ─── Pure parsers (exported for tests) ────────────────────────────────────
 
-async function refreshClaudeUsage(): Promise<void> {
-  const cacheFile = join(tmpdir(), "sl-claude-usage");
-  const hitFile = join(tmpdir(), "sl-claude-usage-hit");
-  const now = Date.now();
-
-  let staleData: { fiveHour: number; sevenDay: number; fiveHourResetsAt?: number } | null = null;
-  let lastAttempt = 0;
-  let cachedTokenHash = "";
-  if (existsSync(cacheFile)) {
-    try {
-      const cached = JSON.parse(readFileSync(cacheFile, "utf-8"));
-      staleData = cached.data ?? null;
-      lastAttempt = cached.lastAttempt || 0;
-      cachedTokenHash = cached.tokenHash || "";
-    } catch {}
+/**
+ * Coerce an Anthropic utilization value to an integer percent, or null if invalid.
+ * Accepts numbers, percent strings ("42%"), or bare numeric strings ("42").
+ *
+ * Strict regex rejects partial numerics like "42abc" so a future schema change
+ * can't smuggle a 42 through. Whitespace and optional sign are tolerated.
+ */
+export function parseUtilization(val: any): number | null {
+  if (typeof val === "number") {
+    return isFinite(val) ? Math.round(val) : null;
   }
+  if (typeof val === "string") {
+    if (!/^\s*-?\d+(\.\d+)?\s*%?\s*$/.test(val)) return null;
+    const n = parseFloat(val.replace("%", ""));
+    return isFinite(n) ? Math.round(n) : null;
+  }
+  return null;
+}
 
-  // Get current token — cross-platform. Try each candidate until one yields a
-  // valid, non-expired token; this way a Keychain that returns garbage or an
-  // expired entry still falls through to the file fallback.
-  //   macOS: Keychain first (Claude Code 2.x), then file fallback
-  //   Windows/Linux: ~/.claude/.credentials.json (Claude Code stores tokens there)
-  let accessToken = "";
+/**
+ * Coerce an Anthropic resets_at timestamp to ms-epoch, future-only.
+ * Accepts ISO strings, ms-epoch numbers, or s-epoch numbers (heuristic: >1e12 = ms).
+ */
+export function parseAnthropicReset(raw: any, nowMs: number): number | undefined {
+  if (raw == null) return undefined;
+  if (typeof raw === "string") {
+    const t = new Date(raw).getTime();
+    return isFinite(t) && t > nowMs ? t : undefined;
+  }
+  if (typeof raw === "number" && isFinite(raw)) {
+    const ms = raw > 1e12 ? raw : raw * 1000;
+    return ms > nowMs ? ms : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Validate and extract usage data from the Anthropic API response.
+ * Returns null on schema mismatch so the caller can preserve stale cache.
+ */
+export function parseAnthropicUsage(data: any, nowMs: number): UsageData | null {
+  if (!data || typeof data !== "object") return null;
+  const fiveHour = parseUtilization(data.five_hour?.utilization);
+  const sevenDay = parseUtilization(data.seven_day?.utilization);
+  if (fiveHour === null || sevenDay === null) return null;
+
+  const resetsRaw = data.five_hour?.resets_at ?? data.five_hour?.reset_at ?? data.five_hour?.next_reset;
+  const fiveHourResetsAt = parseAnthropicReset(resetsRaw, nowMs);
+
+  const result: UsageData = { fiveHour, sevenDay };
+  if (fiveHourResetsAt !== undefined) result.fiveHourResetsAt = fiveHourResetsAt;
+  return result;
+}
+
+/**
+ * Validate and extract rank data from the ccclub API response.
+ * Returns null if the user is not in the ranking list or fields are malformed.
+ */
+export function parseCcclubRank(data: any, userId: string): RankData | null {
+  if (!data || typeof data !== "object") return null;
+  const rankings = Array.isArray(data.rankings) ? data.rankings : null;
+  if (!rankings) return null;
+  const me = rankings.find((r: any) => r && r.userId === userId);
+  if (!me) return null;
+  const rank = me.rank;
+  const cost = me.costUSD;
+  if (typeof rank !== "number" || !isFinite(rank)) return null;
+  if (typeof cost !== "number" || !isFinite(cost)) return null;
+  return { rank, total: rankings.length, cost };
+}
+
+/**
+ * Build a validated ccclub rank URL.
+ * Returns null if apiUrl is not a parseable http(s) URL.
+ *
+ * Preserves any path prefix on `apiUrl` (e.g., a self-hosted ccclub mounted at
+ * `https://host/ccclub` should resolve to `https://host/ccclub/api/rank/...`,
+ * not `https://host/api/rank/...`).
+ */
+export function buildCcclubUrl(apiUrl: string, code: string, tz: number): string | null {
+  if (typeof apiUrl !== "string" || !apiUrl) return null;
+  let base: URL;
+  try {
+    base = new URL(apiUrl);
+  } catch {
+    return null;
+  }
+  if (base.protocol !== "http:" && base.protocol !== "https:") return null;
+
+  const basePath = base.pathname.replace(/\/+$/, "");
+  const fullPath = `${basePath}/api/rank/${encodeURIComponent(code)}`;
+  const url = new URL(fullPath, base.origin);
+  url.searchParams.set("period", "today");
+  url.searchParams.set("tz", String(tz));
+  return url.toString();
+}
+
+// ─── HTTP helper (Node 22 native fetch) ───────────────────────────────────
+
+async function httpGetJSON(url: string, headers: Record<string, string> = {}): Promise<any | null> {
+  try {
+    const res = await fetch(url, {
+      headers: { "User-Agent": USER_AGENT, ...headers },
+      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+// ─── Credential loading (cross-platform) ──────────────────────────────────
+
+function loadAccessToken(nowMs: number): string {
   const credentialLoaders: Array<() => string | null> = [];
+
   if (process.platform === "darwin") {
     credentialLoaders.push(() => {
       try {
@@ -99,13 +234,14 @@ async function refreshClaudeUsage(): Promise<void> {
         return execFileSync(
           "security",
           ["find-generic-password", "-s", "Claude Code-credentials", "-a", username, "-w"],
-          { encoding: "utf-8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"] }
+          { encoding: "utf-8", timeout: 2000, stdio: ["pipe", "pipe", "pipe"], windowsHide: true }
         ).trim();
       } catch {
         return null;
       }
     });
   }
+
   credentialLoaders.push(() => {
     const credPath = join(homedir(), ".claude", ".credentials.json");
     if (!existsSync(credPath)) return null;
@@ -124,70 +260,117 @@ async function refreshClaudeUsage(): Promise<void> {
       const token = credentials.claudeAiOauth?.accessToken || "";
       if (!token) continue;
       const expiresAt = credentials.claudeAiOauth?.expiresAt;
-      if (expiresAt && now > expiresAt) continue;
-      accessToken = token;
-      break;
+      if (expiresAt && nowMs > expiresAt) continue;
+      return token;
     } catch {
       // Invalid JSON in this candidate — try next.
     }
   }
+  return "";
+}
+
+// ─── Local cost refresh ───────────────────────────────────────────────────
+
+function refreshLocalCost(transcriptPath: string): void {
+  const cache = readCache();
+  if (!shouldRefreshLocalCostCache(cache, transcriptPath)) return;
+  try {
+    const result = collectCosts(undefined, cache?.files);
+    // Catastrophic scan failure → preserve cached value rather than zeroing it out.
+    // A successful empty scan (ok: true, cost: 0) DOES overwrite — that's the user's true state.
+    if (!result.ok) return;
+    writeCache({
+      cost7d: result.cost7d,
+      cost30d: result.cost30d,
+      updatedAt: new Date().toISOString(),
+      files: result.files,
+    });
+  } catch {}
+}
+
+// ─── Anthropic usage refresh ──────────────────────────────────────────────
+
+async function refreshClaudeUsage(): Promise<void> {
+  const cacheFile = join(tmpdir(), "sl-claude-usage");
+  const hitFile = join(tmpdir(), "sl-claude-usage-hit");
+  const now = Date.now();
+
+  let staleData: UsageData | null = null;
+  let lastAttempt = 0;
+  let cachedTokenHash = "";
+  if (existsSync(cacheFile)) {
+    try {
+      const cached = JSON.parse(readFileSync(cacheFile, "utf-8"));
+      staleData = cached.data ?? null;
+      lastAttempt = cached.lastAttempt || 0;
+      cachedTokenHash = cached.tokenHash || "";
+    } catch {}
+  }
+
+  const accessToken = loadAccessToken(now);
   if (!accessToken) return;
 
   const currentTokenHash = createHash("sha256").update(accessToken).digest("hex").slice(0, 16);
-  const tokenChanged = cachedTokenHash && currentTokenHash !== cachedTokenHash;
+  // Treat a missing hash as "unknown token" so legacy caches retry immediately on first
+  // run after upgrade — populates the hash for subsequent freshness checks.
+  const tokenChanged = !cachedTokenHash || currentTokenHash !== cachedTokenHash;
 
-  // Skip if cache is fresh and token hasn't rotated
   if (!tokenChanged && lastAttempt && now - lastAttempt < ANTHROPIC_TTL_MS) return;
 
-  // Mark attempt before HTTP — protects against repeated failures hammering the API
-  try { writeFileSync(cacheFile, JSON.stringify({ data: staleData, lastAttempt: now, tokenHash: currentTokenHash }), "utf-8"); } catch {}
+  // Mark attempt before HTTP — protects against repeated failures hammering the API.
+  // Best-effort: a write failure in the background must not crash the refresh subprocess.
+  try {
+    atomicWriteFileSync(cacheFile, JSON.stringify({ data: staleData, lastAttempt: now, tokenHash: currentTokenHash }));
+  } catch {}
+
+  const data = await httpGetJSON("https://api.anthropic.com/api/oauth/usage", {
+    Authorization: `Bearer ${accessToken}`,
+    "anthropic-beta": "oauth-2025-04-20",
+  });
+  if (!data) return;
+
+  const parsed = parseAnthropicUsage(data, now);
+  // Schema mismatch → preserve stale data rather than overwriting with garbage.
+  if (!parsed) return;
+
+  // Handle the 100%-saturated case: when the API doesn't return a resets_at, we
+  // persist a "first observed" timestamp to provide a stable 5h countdown.
+  let fiveHourResetsAt = parsed.fiveHourResetsAt;
+  if (parsed.fiveHour >= 100) {
+    if (!fiveHourResetsAt) {
+      if (existsSync(hitFile)) {
+        try {
+          const hitTime = parseFloat(readFileSync(hitFile, "utf-8").trim());
+          if (isFinite(hitTime)) {
+            const candidate = hitTime + 5 * 3600 * 1000;
+            // Reject stale hitFiles where the projected reset is already in the
+            // past — otherwise the countdown gets stuck at "-0:00" forever.
+            if (candidate > now) {
+              fiveHourResetsAt = candidate;
+            } else {
+              try { unlinkSync(hitFile); } catch {}
+            }
+          }
+        } catch {}
+      }
+      if (!fiveHourResetsAt) {
+        try { writeFileSync(hitFile, String(now), "utf-8"); } catch {}
+        fiveHourResetsAt = now + 5 * 3600 * 1000;
+      }
+    }
+  } else {
+    try { if (existsSync(hitFile)) unlinkSync(hitFile); } catch {}
+  }
+
+  const result: UsageData = { fiveHour: parsed.fiveHour, sevenDay: parsed.sevenDay };
+  if (fiveHourResetsAt) result.fiveHourResetsAt = fiveHourResetsAt;
 
   try {
-    const apiUrl = "https://api.anthropic.com/api/oauth/usage";
-    const response = await fetch(apiUrl, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        "anthropic-beta": "oauth-2025-04-20",
-      },
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!response.ok) return;
-    const data = await response.json();
-    try { writeFileSync(join(tmpdir(), "sl-claude-usage-raw"), JSON.stringify(data, null, 2), "utf-8"); } catch {}
-
-    const parseUtil = (val: any): number => {
-      if (typeof val === "number") return Math.round(val);
-      if (typeof val === "string") return Math.round(parseFloat(val.replace("%", "")));
-      return 0;
-    };
-    const fiveHour = parseUtil(data.five_hour?.utilization);
-    const sevenDay = parseUtil(data.seven_day?.utilization);
-
-    let fiveHourResetsAt: number | undefined;
-    const resetsAtRaw = data.five_hour?.resets_at ?? data.five_hour?.reset_at ?? data.five_hour?.next_reset;
-    if (resetsAtRaw) {
-      const ts = typeof resetsAtRaw === "string" ? new Date(resetsAtRaw).getTime() : resetsAtRaw * 1000;
-      if (!isNaN(ts) && ts > now) fiveHourResetsAt = ts;
-    }
-    if (fiveHour >= 100) {
-      if (!fiveHourResetsAt) {
-        if (existsSync(hitFile)) {
-          const hitTime = parseFloat(readFileSync(hitFile, "utf-8").trim());
-          if (!isNaN(hitTime)) fiveHourResetsAt = hitTime + 5 * 3600 * 1000;
-        } else {
-          writeFileSync(hitFile, String(now), "utf-8");
-          fiveHourResetsAt = now + 5 * 3600 * 1000;
-        }
-      }
-    } else {
-      try { if (existsSync(hitFile)) unlinkSync(hitFile); } catch {}
-    }
-
-    const result: { fiveHour: number; sevenDay: number; fiveHourResetsAt?: number } = { fiveHour, sevenDay };
-    if (fiveHourResetsAt) result.fiveHourResetsAt = fiveHourResetsAt;
-    writeFileSync(cacheFile, JSON.stringify({ data: result, lastAttempt: now, tokenHash: currentTokenHash }), "utf-8");
+    atomicWriteFileSync(cacheFile, JSON.stringify({ data: result, lastAttempt: now, tokenHash: currentTokenHash }));
   } catch {}
 }
+
+// ─── ccclub rank refresh ──────────────────────────────────────────────────
 
 async function refreshCcclubRank(): Promise<void> {
   const configPath = join(homedir(), ".ccclub", "config.json");
@@ -195,7 +378,7 @@ async function refreshCcclubRank(): Promise<void> {
   const cacheFile = join(tmpdir(), "sl-ccclub-rank");
   const now = Date.now();
 
-  let staleData: { rank: number; total: number; cost: number } | null = null;
+  let staleData: RankData | null = null;
   let lastAttempt = 0;
   if (existsSync(cacheFile)) {
     try {
@@ -206,27 +389,39 @@ async function refreshCcclubRank(): Promise<void> {
     } catch {}
   }
 
-  // Mark attempt before HTTP
-  try { writeFileSync(cacheFile, JSON.stringify({ data: staleData, timestamp: staleData ? (lastAttempt || now) : 0, lastAttempt: now }), "utf-8"); } catch {}
+  // Mark attempt before HTTP — best-effort, must not crash the refresh subprocess.
+  try {
+    atomicWriteFileSync(cacheFile, JSON.stringify({ data: staleData, timestamp: staleData ? (lastAttempt || now) : 0, lastAttempt: now }));
+  } catch {}
+
+  let config: any;
+  try {
+    config = JSON.parse(readFileSync(configPath, "utf-8"));
+  } catch {
+    return;
+  }
+  const code = config?.groups?.[0];
+  const userId = config?.userId;
+  const apiUrl = config?.apiUrl;
+  if (typeof code !== "string" || !code) return;
+  if (typeof userId !== "string" || !userId) return;
+
+  const tz = -(new Date()).getTimezoneOffset();
+  const url = buildCcclubUrl(apiUrl, code, tz);
+  if (!url) return;
+
+  const data = await httpGetJSON(url);
+  if (!data) return;
+
+  const result = parseCcclubRank(data, userId);
+  if (!result) return;
 
   try {
-    const config = JSON.parse(readFileSync(configPath, "utf-8"));
-    const code = config.groups?.[0];
-    const userId = config.userId;
-    const apiUrl = config.apiUrl;
-    if (!code || !userId || typeof apiUrl !== "string") return;
-    const tz = -(new Date()).getTimezoneOffset();
-    const url = `${apiUrl.replace(/\/$/, "")}/api/rank/${encodeURIComponent(code)}?period=today&tz=${tz}`;
-    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
-    if (!response.ok) return;
-    const data = await response.json();
-    const rankings = data.rankings || [];
-    const me = rankings.find((r: any) => r.userId === userId);
-    if (!me) return;
-    const result = { rank: me.rank, total: rankings.length, cost: me.costUSD };
-    writeFileSync(cacheFile, JSON.stringify({ data: result, timestamp: now, lastAttempt: now }), "utf-8");
+    atomicWriteFileSync(cacheFile, JSON.stringify({ data: result, timestamp: now, lastAttempt: now }));
   } catch {}
 }
+
+// ─── Orchestration ────────────────────────────────────────────────────────
 
 export async function refreshAll(transcriptPath = ""): Promise<void> {
   if (!acquireLock()) return;
