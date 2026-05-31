@@ -50,12 +50,14 @@ describe("collectCosts", () => {
     const result = collectCosts(tmpDir);
     assert.equal(result.cost7d, 0);
     assert.equal(result.cost30d, 0);
+    assert.equal(result.scanFailed, false);
   });
 
   it("returns zeros for non-existent directory", () => {
     const result = collectCosts(join(tmpDir, "nope"));
     assert.equal(result.cost7d, 0);
     assert.equal(result.cost30d, 0);
+    assert.equal(result.scanFailed, undefined);
   });
 
   it("calculates cost from a single jsonl file", () => {

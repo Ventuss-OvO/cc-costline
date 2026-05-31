@@ -72,21 +72,21 @@ describe("ctxColor", () => {
 describe("formatCountdown", () => {
   it("formats hours and minutes", () => {
     const now = Date.now();
-    assert.equal(formatCountdown(now + 3 * 3600_000 + 20 * 60_000), "-3:20");
+    assert.equal(formatCountdown(now + 3 * 3600_000 + 20 * 60_000), "-03:20");
   });
 
   it("formats minutes only (< 1 hour)", () => {
     const now = Date.now();
-    assert.equal(formatCountdown(now + 45 * 60_000), "-0:45");
+    assert.equal(formatCountdown(now + 45 * 60_000), "-00:45");
   });
 
-  it("shows ~0:00 when past reset time", () => {
-    assert.equal(formatCountdown(Date.now() - 1000), "~0:00");
+  it("shows -00:00 when past reset time", () => {
+    assert.equal(formatCountdown(Date.now() - 1000), "-00:00");
   });
 
   it("pads minutes to 2 digits", () => {
     const now = Date.now();
-    assert.equal(formatCountdown(now + 2 * 3600_000 + 5 * 60_000), "-2:05");
+    assert.equal(formatCountdown(now + 2 * 3600_000 + 5 * 60_000), "-02:05");
   });
 });
 

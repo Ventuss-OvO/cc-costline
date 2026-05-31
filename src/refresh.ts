@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync, utimesSync, closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { readCache, writeCache } from "./cache.js";
 import { collectCosts } from "./collector.js";
 import { shouldRefreshLocalCostCache } from "./statusline.js";
@@ -54,8 +54,9 @@ function refreshLocalCost(transcriptPath: string): void {
   if (!shouldRefreshLocalCostCache(cache, transcriptPath)) return;
   try {
     const result = collectCosts(undefined, cache?.files);
-    // Don't overwrite valid cache with zeros (directory read failure)
-    if (result.cost7d > 0 || result.cost30d > 0 || !cache) {
+    // Keep stale data only when the scan itself failed. A successful scan that
+    // returns zero should clear old rolling-window totals.
+    if (!result.scanFailed || !cache) {
       writeCache({
         cost7d: result.cost7d,
         cost30d: result.cost30d,
@@ -66,7 +67,7 @@ function refreshLocalCost(transcriptPath: string): void {
   } catch {}
 }
 
-function refreshClaudeUsage(): void {
+async function refreshClaudeUsage(): Promise<void> {
   const cacheFile = "/tmp/sl-claude-usage";
   const hitFile = "/tmp/sl-claude-usage-hit";
   const now = Date.now();
@@ -86,8 +87,12 @@ function refreshClaudeUsage(): void {
   let accessToken = "";
   try {
     const username = process.env.USER || process.env.USERNAME;
-    const keychainCmd = `security find-generic-password -s "Claude Code-credentials" -a "${username}" -w 2>/dev/null`;
-    const credentialsJSON = execSync(keychainCmd, { encoding: "utf-8", timeout: 2000 }).trim();
+    if (!username) return;
+    const credentialsJSON = execFileSync(
+      "security",
+      ["find-generic-password", "-s", "Claude Code-credentials", "-a", username, "-w"],
+      { encoding: "utf-8", timeout: 2000, stdio: ["ignore", "pipe", "ignore"] },
+    ).trim();
     if (!credentialsJSON) return;
     const credentials = JSON.parse(credentialsJSON);
     accessToken = credentials.claudeAiOauth?.accessToken || "";
@@ -109,10 +114,15 @@ function refreshClaudeUsage(): void {
 
   try {
     const apiUrl = "https://api.anthropic.com/api/oauth/usage";
-    const curlCmd = `curl -sf "${apiUrl}" -H "Authorization: Bearer ${accessToken}" -H "anthropic-beta: oauth-2025-04-20"`;
-    const response = execSync(curlCmd, { encoding: "utf-8", timeout: 5000 });
-    if (!response) return;
-    const data = JSON.parse(response);
+    const response = await fetch(apiUrl, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "anthropic-beta": "oauth-2025-04-20",
+      },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return;
+    const data = await response.json();
     try { writeFileSync("/tmp/sl-claude-usage-raw", JSON.stringify(data, null, 2), "utf-8"); } catch {}
 
     const parseUtil = (val: any): number => {
@@ -149,7 +159,7 @@ function refreshClaudeUsage(): void {
   } catch {}
 }
 
-function refreshCcclubRank(): void {
+async function refreshCcclubRank(): Promise<void> {
   const configPath = join(homedir(), ".ccclub", "config.json");
   if (!existsSync(configPath)) return;
   const cacheFile = "/tmp/sl-ccclub-rank";
@@ -173,12 +183,13 @@ function refreshCcclubRank(): void {
     const config = JSON.parse(readFileSync(configPath, "utf-8"));
     const code = config.groups?.[0];
     const userId = config.userId;
-    if (!code || !userId) return;
+    const apiUrl = config.apiUrl;
+    if (!code || !userId || typeof apiUrl !== "string") return;
     const tz = -(new Date()).getTimezoneOffset();
-    const url = `${config.apiUrl}/api/rank/${code}?period=today&tz=${tz}`;
-    const response = execSync(`curl -sf "${url}"`, { encoding: "utf-8", timeout: 5000 });
-    if (!response) return;
-    const data = JSON.parse(response);
+    const url = `${apiUrl.replace(/\/$/, "")}/api/rank/${encodeURIComponent(code)}?period=today&tz=${tz}`;
+    const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) return;
+    const data = await response.json();
     const rankings = data.rankings || [];
     const me = rankings.find((r: any) => r.userId === userId);
     if (!me) return;
@@ -187,12 +198,12 @@ function refreshCcclubRank(): void {
   } catch {}
 }
 
-export function refreshAll(transcriptPath = ""): void {
+export async function refreshAll(transcriptPath = ""): Promise<void> {
   if (!acquireLock()) return;
   try {
     refreshLocalCost(transcriptPath);
-    refreshClaudeUsage();
-    refreshCcclubRank();
+    await refreshClaudeUsage();
+    await refreshCcclubRank();
   } finally {
     releaseLock();
   }

@@ -71,7 +71,7 @@ cc-costline config --period both # Show both periods
    - **Local cost** (2-min TTL): incremental scan — per-file `mtime+size` cache reuses entries that haven't changed (~25 ms typical vs ~2 s cold on 1000+ jsonl files)
    - **Usage limits** (5-min retry, token-aware): fetches `api.anthropic.com/api/oauth/usage`. Detects OAuth token rotation to retry immediately with fresh rate limit quota. Stale data persists across failures.
    - **ccclub rank** (90 s retry): fetches `ccclub.dev/api/rank`
-5. `refresh` can also be run manually or via session-end hooks to warm the cost cache.
+5. `refresh` can also be run manually to recalculate the local cost cache; session-end hooks use `refresh-bg` to warm all caches without blocking Claude Code.
 
 <details>
 <summary>Pricing table</summary>

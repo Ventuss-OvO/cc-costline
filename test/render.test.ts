@@ -96,6 +96,35 @@ describe("render", () => {
     }
   });
 
+  it("prefers stdin context token totals over reading transcript", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "cc-render-test-"));
+    try {
+      const transcriptPath = join(tmpDir, "session.jsonl");
+      writeFileSync(transcriptPath, JSON.stringify({
+        type: "assistant",
+        message: { usage: { input_tokens: 5000, output_tokens: 2000 } },
+      }) + "\n");
+
+      const input = JSON.stringify({
+        cost: { total_cost_usd: 1.5 },
+        model: { display_name: "Sonnet 4.5" },
+        context_window: {
+          used_percentage: 25,
+          total_input_tokens: 1000,
+          total_output_tokens: 500,
+        },
+        transcript_path: transcriptPath,
+      });
+      const output = render(input);
+      const plain = stripAnsi(output);
+
+      assert.ok(plain.includes("1.5k"), `should show stdin token total, got: ${plain}`);
+      assert.ok(!plain.includes("7.0k"), `should not read transcript when stdin totals exist, got: ${plain}`);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("shows 0 tokens when no transcript", () => {
     const input = JSON.stringify({
       cost: { total_cost_usd: 0.5 },

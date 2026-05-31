@@ -14,7 +14,7 @@ import { refreshAll } from "./refresh.js";
 
 const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
 const RENDER_COMMAND = "cc-costline render";
-const REFRESH_COMMAND = "cc-costline refresh";
+const REFRESH_COMMAND = "cc-costline refresh-bg";
 
 // ─── Helpers ──────────────────────────────────────────────
 
@@ -53,7 +53,7 @@ function cmdInstall(): void {
     command: RENDER_COMMAND,
   };
 
-  // 2. Add SessionEnd hook for refresh
+  // 2. Add SessionEnd hook for background refresh
   if (!settings.hooks) settings.hooks = {};
 
   for (const event of ["SessionEnd", "Stop"] as const) {
@@ -163,9 +163,9 @@ function cmdRender(): void {
   if (output) process.stdout.write(output);
 }
 
-function cmdRefreshBg(args: string[]): void {
+async function cmdRefreshBg(args: string[]): Promise<void> {
   const transcriptPath = args[0] || "";
-  refreshAll(transcriptPath);
+  await refreshAll(transcriptPath);
 }
 
 // ─── Main ─────────────────────────────────────────────────
@@ -187,7 +187,7 @@ switch (command) {
     cmdRefresh();
     break;
   case "refresh-bg":
-    cmdRefreshBg(args.slice(1));
+    await cmdRefreshBg(args.slice(1));
     break;
   case "render":
     cmdRender();

@@ -45,11 +45,11 @@ export function ctxColor(pct: number): string {
 
 export function formatCountdown(resetsAtMs: number): string {
   const remainingMs = resetsAtMs - Date.now();
-  if (remainingMs <= 0) return "~0:00";
+  if (remainingMs <= 0) return "-00:00";
   const totalMinutes = Math.ceil(remainingMs / 60000);
   const hours = Math.floor(totalMinutes / 60);
   const minutes = totalMinutes % 60;
-  return `-${hours}:${String(minutes).padStart(2, "0")}`;
+  return `-${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}`;
 }
 
 export function shouldRefreshLocalCostCache(
@@ -99,6 +99,10 @@ function readRankCache(): { rank: number; total: number; cost: number } | null {
   }
 }
 
+function numeric(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 // Spawn detached `cc-costline refresh-bg` subprocess. Render does NOT wait for it.
 // The subprocess uses a lockfile to prevent concurrent refresh across multiple Claude Code windows.
 function maybeSpawnRefresh(transcriptPath: string): void {
@@ -136,9 +140,18 @@ export function render(input: string): string {
   const contextPct = Math.floor(data.context_window?.used_percentage ?? 0);
   const transcriptPath = data.transcript_path ?? "";
 
-  // Token stats from transcript (synchronous — small per-session file, typically < 1ms)
-  let totalTokens = 0;
-  if (transcriptPath) {
+  const inputTokens = numeric(data.context_window?.total_input_tokens);
+  const outputTokens = numeric(data.context_window?.total_output_tokens);
+
+  // Prefer Claude Code's stdin token counts. Reading the whole transcript on
+  // every render gets slower as a session grows, and newer Claude Code versions
+  // cancel slow statusline commands more aggressively.
+  let totalTokens = inputTokens !== null || outputTokens !== null
+    ? (inputTokens || 0) + (outputTokens || 0)
+    : 0;
+
+  // Fallback for older Claude Code versions that did not send token totals.
+  if (totalTokens === 0 && inputTokens === null && outputTokens === null && transcriptPath) {
     try {
       const content = readFileSync(transcriptPath, "utf-8");
       const lines = content.split("\n");
@@ -181,6 +194,8 @@ export function render(input: string): string {
     if (claudeUsage.fiveHour >= 100 && claudeUsage.fiveHourResetsAt) {
       const countdown = formatCountdown(claudeUsage.fiveHourResetsAt);
       usageParts.push(`${FG_RED}5h:${countdown}${r}`);
+    } else if (claudeUsage.fiveHour >= 100) {
+      usageParts.push(`${FG_RED}5h:-00:00${r}`);
     } else {
       const c5 = ctxColor(claudeUsage.fiveHour);
       usageParts.push(`${c5}5h:${claudeUsage.fiveHour}%${r}`);

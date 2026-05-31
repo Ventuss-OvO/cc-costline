@@ -1,6 +1,6 @@
 {
   "name": "cc-costline",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Enhanced statusline for Claude Code with cost tracking, usage limits, and leaderboard",
   "type": "module",
   "bin": {

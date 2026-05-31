@@ -71,7 +71,7 @@ cc-costline config --period both # 同时显示两个周期
    - **本地费用**（2 分钟 TTL）：增量扫描 — 按文件 `mtime+size` 缓存，未变更的文件直接复用（1000+ jsonl 时典型 25 ms vs 冷启动 2 s）
    - **使用率**（5 分钟重试，感知 token 轮换）：从 `api.anthropic.com/api/oauth/usage` 获取。检测 OAuth token 轮换后立即重试（新 token 有新的速率配额）。API 失败时保留历史数据。
    - **ccclub 排名**（90 秒重试）：从 `ccclub.dev/api/rank` 获取
-5. `refresh` 也可以手动运行或通过会话结束 hook 预热缓存。
+5. `refresh` 可手动运行以重新计算本地费用缓存；会话结束 hook 使用 `refresh-bg` 预热全部缓存，避免阻塞 Claude Code。
 
 <details>
 <summary>定价表</summary>

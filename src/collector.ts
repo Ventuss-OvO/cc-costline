@@ -10,16 +10,17 @@ interface CollectResult {
   cost7d: number;
   cost30d: number;
   files: Record<string, FileCostEntry>;
+  scanFailed?: boolean;
 }
 
 /** Recursively find all .jsonl files under a directory */
-function findJsonlFiles(dir: string): string[] {
+function findJsonlFiles(dir: string, isRoot = true): { files: string[]; failed: boolean } {
   const results: string[] = [];
   let entries: string[];
   try {
     entries = readdirSync(dir);
   } catch {
-    return results;
+    return { files: results, failed: isRoot };
   }
   for (const entry of entries) {
     const full = join(dir, entry);
@@ -30,12 +31,13 @@ function findJsonlFiles(dir: string): string[] {
       continue;
     }
     if (stat.isDirectory()) {
-      results.push(...findJsonlFiles(full));
+      const nested = findJsonlFiles(full, false);
+      results.push(...nested.files);
     } else if (entry.endsWith(".jsonl")) {
       results.push(full);
     }
   }
-  return results;
+  return { files: results, failed: false };
 }
 
 function dayKey(ms: number): string {
@@ -109,10 +111,19 @@ export function collectCosts(
   prevFiles?: Record<string, FileCostEntry>,
 ): CollectResult {
   const projectsDir = baseDir || join(homedir(), CLAUDE_PROJECTS_DIR);
-  const files = findJsonlFiles(projectsDir);
+  try {
+    if (!statSync(projectsDir).isDirectory()) {
+      return { cost7d: 0, cost30d: 0, files: {} };
+    }
+  } catch {
+    return { cost7d: 0, cost30d: 0, files: {} };
+  }
+
+  const scan = findJsonlFiles(projectsDir);
+  const files = scan.files;
 
   if (files.length === 0) {
-    return { cost7d: 0, cost30d: 0, files: {} };
+    return { cost7d: 0, cost30d: 0, files: {}, scanFailed: scan.failed };
   }
 
   const now = Date.now();
