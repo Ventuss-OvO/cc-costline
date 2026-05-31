@@ -7,7 +7,7 @@
 ![cc-costline 截图](screenshot.png)
 
 ```
-14.6k ~ $2.42 / 40% by Opus 4.6 | 5h: 45% / 7d: 8% | 30d: $866 | #2/22 $67.0
+14.6k $2.42 · 40% Opus 4.6 / 5h:45% · 7d:8% · 30d:$866 / #2 $67.0
 ```
 
 ## 安装
@@ -30,10 +30,10 @@ npm i -g cc-costline@latest
 
 | 模块 | 示例 | 说明 |
 |------|------|------|
-| Token ~ 费用 / 上下文 | `14.6k ~ $2.42 / 40% by Opus 4.6` | 会话 token 数量、费用、上下文使用率和模型 |
-| 使用限额 | `5h: 45% / 7d: 8%` | Claude 5 小时和 7 天使用率（颜色同上下文）。达到 100% 时显示倒计时：`5h:-3:20` |
-| 周期费用 | `30d: $866` | 滚动费用合计（可配置：7d、30d 或 both） |
-| 排行榜 | `#2/22 $67.0` | [ccclub](https://github.com/mazzzystar/ccclub) 排名（需安装） |
+| Token / 费用 / 上下文 | `14.6k $2.42 · 40% Opus 4.6` | 会话 token 数量、费用、上下文使用率和模型 |
+| 使用限额 | `5h:45% · 7d:8%` | Claude 5 小时和 7 天使用率（颜色同上下文）。达到 100% 时显示倒计时：`5h:-03:20` |
+| 周期费用 | `30d:$866` | 滚动费用合计（可配置：7d、30d 或 both） |
+| 排行榜 | `#2 $67.0` | [ccclub](https://github.com/mazzzystar/ccclub) 排名（需安装） |
 
 ### 颜色规则
 
@@ -62,7 +62,7 @@ cc-costline config --period both # 同时显示两个周期
 ## 工作原理
 
 1. `install` 配置 `~/.claude/settings.json` — 设置状态栏命令并添加会话结束 hook。你的现有设置会被保留。
-2. `render` 在每次对话时被 Claude Code 调用，约 65 ms 返回。它只读三份缓存（不发起 HTTP，不扫描全目录）：
+2. `render` 在每次对话时被 Claude Code 调用。它优先读取 Claude Code stdin 中的 token 总数，然后读取三份缓存（不发起 HTTP，不扫描全目录）：
    - **本地费用** → `~/.cc-costline/cache.json`
    - **使用率** → `/tmp/sl-claude-usage`
    - **ccclub 排名** → `/tmp/sl-ccclub-rank`

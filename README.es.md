@@ -7,7 +7,7 @@ Statusline mejorada para [Claude Code](https://docs.anthropic.com/en/docs/claude
 ![Captura de pantalla cc-costline](screenshot.png)
 
 ```
-14.6k ~ $2.42 / 40% by Opus 4.6 | 5h: 45% / 7d: 8% | 30d: $866 | #2/22 $67.0
+14.6k $2.42 · 40% Opus 4.6 / 5h:45% · 7d:8% · 30d:$866 / #2 $67.0
 ```
 
 ## Instalación
@@ -30,10 +30,10 @@ npm i -g cc-costline@latest
 
 | Segmento | Ejemplo | Descripción |
 |----------|---------|-------------|
-| Tokens ~ Costo / Contexto | `14.6k ~ $2.42 / 40% by Opus 4.6` | Tokens de la sesión, costo, uso de contexto y modelo |
-| Límites de uso | `5h: 45% / 7d: 8%` | Utilización de Claude a 5 horas y 7 días (coloreado como el contexto). Al 100%, muestra cuenta regresiva: `5h:-3:20` |
-| Costo del período | `30d: $866` | Costo acumulado (configurable: 7d, 30d o both) |
-| Ranking | `#2/22 $67.0` | Posición en [ccclub](https://github.com/mazzzystar/ccclub) (si está instalado) |
+| Tokens / Costo / Contexto | `14.6k $2.42 · 40% Opus 4.6` | Tokens de la sesión, costo, uso de contexto y modelo |
+| Límites de uso | `5h:45% · 7d:8%` | Utilización de Claude a 5 horas y 7 días (coloreado como el contexto). Al 100%, muestra cuenta regresiva: `5h:-03:20` |
+| Costo del período | `30d:$866` | Costo acumulado (configurable: 7d, 30d o both) |
+| Ranking | `#2 $67.0` | Posición en [ccclub](https://github.com/mazzzystar/ccclub) (si está instalado) |
 
 ### Colores
 
@@ -62,7 +62,7 @@ cc-costline config --period both # Mostrar ambos períodos
 ## Cómo funciona
 
 1. `install` configura `~/.claude/settings.json` — establece el comando de statusline y añade hooks de fin de sesión. Tu configuración existente se conserva.
-2. `render` es llamado por Claude Code en cada turno y retorna en ~65 ms. Solo lee tres cachés (sin HTTP, sin escaneo completo del directorio):
+2. `render` es llamado por Claude Code en cada turno. Lee los totales de tokens desde stdin cuando Claude Code los proporciona, y después lee tres cachés (sin HTTP, sin escaneo completo del directorio):
    - **Costo local** → `~/.cc-costline/cache.json`
    - **Límites de uso** → `/tmp/sl-claude-usage`
    - **Ranking ccclub** → `/tmp/sl-ccclub-rank`
@@ -71,7 +71,7 @@ cc-costline config --period both # Mostrar ambos períodos
    - **Costo local** (TTL 2 min): escaneo incremental — caché por archivo (`mtime+size`), reutiliza entradas sin cambios (~25 ms típico vs ~2 s en frío con 1000+ archivos jsonl)
    - **Límites de uso** (retry 5 min, sensible al token): obtiene de `api.anthropic.com/api/oauth/usage`. Detecta la rotación del token OAuth para reintentar inmediatamente (nuevo token = nueva cuota de límite). Los datos obsoletos persisten ante fallos.
    - **Ranking ccclub** (retry 90 s): obtiene de `ccclub.dev/api/rank`
-5. `refresh` también puede ejecutarse manualmente o mediante hooks de fin de sesión para precalentar la caché.
+5. `refresh` también puede ejecutarse manualmente para recalcular la caché local de costos; los hooks de fin de sesión usan `refresh-bg` para precalentar todas las cachés sin bloquear Claude Code.
 
 <details>
 <summary>Tabla de precios</summary>

@@ -21,9 +21,10 @@ npm publish     # Publish to npm
 
 ```
 src/
-├── cli.ts          # CLI entry point (install/uninstall/config/refresh/render)
-├── statusline.ts   # Render logic, inline data refresh with unified TTL caching
-├── collector.ts    # Scan ~/.claude/projects/**/*.jsonl for token usage
+├── cli.ts          # CLI entry point (install/uninstall/config/refresh/refresh-bg/render)
+├── statusline.ts   # Render logic; reads stdin + caches and spawns refresh-bg
+├── refresh.ts      # Background local/API/ccclub refresh behind a lockfile
+├── collector.ts    # Incremental scan of ~/.claude/projects/**/*.jsonl
 ├── calculator.ts   # Per-model pricing and cost calculation
 └── cache.ts        # Read/write cost cache and config (~/.cc-costline/)
 test/
@@ -36,15 +37,16 @@ test/
 
 ## Key Design Decisions
 
-- **TTL-based caching**: All data sources (local cost, usage API, ccclub rank) use a unified 2-minute TTL, refreshed inline during render
-- **No User-Agent header**: The Anthropic usage API rate-limits requests with `claude-code` User-Agent
-- **Failure caching**: On API failure, a cache entry with null data is written to prevent retry floods
-- **Deduplication**: Token cost collection deduplicates by requestId; fallback key includes model + all token types to avoid false dedup
-- **Stale fallback**: If API fetch fails or collectCosts returns 0 with existing non-zero cache, retains stale data
-- **Safe settings**: `readSettings()` aborts if `settings.json` exists but is invalid JSON, preventing config wipe
+- **Non-blocking render**: `render()` prefers Claude Code stdin token totals, reads cache files, and only falls back to transcript token counting for older inputs. HTTP and full jsonl directory scans run in detached `refresh-bg`.
+- **Split TTLs**: Local cost 2 min, Anthropic usage 5 min, ccclub rank 90 s. Local cost also refreshes immediately when transcript mtime is newer than cache.
+- **Background refresh**: `refresh-bg` uses `/tmp/sl-refresh.lock` to prevent concurrent refreshes across windows and `/tmp/sl-refresh.last` to throttle spawns.
+- **No curl shelling for APIs**: Usage and ccclub API calls use Node `fetch`; Keychain lookup uses `execFileSync` without shell interpolation.
+- **Deduplication**: Token cost collection deduplicates by requestId; fallback key includes model + all token types to avoid false dedup.
+- **Stale fallback**: API failures preserve stale data. Local cost preserves stale data only when scanning fails; a successful zero-cost scan clears old totals.
+- **Safe settings**: `readSettings()` aborts if `settings.json` exists but is invalid JSON, preventing config wipe.
 
 ## Conventions
 
-- Keep zero runtime dependencies
-- All formatting functions should be pure and tested
-- Cache files go to `/tmp/sl-*`, config to `~/.cc-costline/`
+- Keep zero runtime dependencies.
+- All formatting functions should be pure and tested.
+- Cache files go to `/tmp/sl-*`, config to `~/.cc-costline/`.

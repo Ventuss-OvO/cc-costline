@@ -7,7 +7,7 @@ Enhanced statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-
 ![cc-costline screenshot](screenshot.png)
 
 ```
-14.6k ~ $2.42 / 40% by Opus 4.6 | 5h: 45% / 7d: 8% | 30d: $866 | #2/22 $67.0
+14.6k $2.42 · 40% Opus 4.6 / 5h:45% · 7d:8% · 30d:$866 / #2 $67.0
 ```
 
 ## Install
@@ -30,10 +30,10 @@ npm i -g cc-costline@latest
 
 | Segment | Example | Description |
 |---------|---------|-------------|
-| Tokens ~ Cost / Context | `14.6k ~ $2.42 / 40% by Opus 4.6` | Session token count, cost, context usage, and model |
-| Usage limits | `5h: 45% / 7d: 8%` | Claude 5-hour and 7-day utilization (auto-colored like context). At 100%, shows countdown: `5h:-3:20` |
-| Period cost | `30d: $866` | Rolling cost total (configurable: 7d, 30d, or both) |
-| Leaderboard | `#2/22 $67.0` | [ccclub](https://github.com/mazzzystar/ccclub) rank (if installed) |
+| Tokens / Cost / Context | `14.6k $2.42 · 40% Opus 4.6` | Session token count, cost, context usage, and model |
+| Usage limits | `5h:45% · 7d:8%` | Claude 5-hour and 7-day utilization (auto-colored like context). At 100%, shows countdown: `5h:-03:20` |
+| Period cost | `30d:$866` | Rolling cost total (configurable: 7d, 30d, or both) |
+| Leaderboard | `#2 $67.0` | [ccclub](https://github.com/mazzzystar/ccclub) rank (if installed) |
 
 ### Colors
 
@@ -62,7 +62,7 @@ cc-costline config --period both # Show both periods
 ## How it works
 
 1. `install` configures `~/.claude/settings.json` — sets the statusline command and adds session-end hooks. Your existing settings are preserved.
-2. `render` is called by Claude Code on every turn and returns in ~65 ms. It only reads three caches (no HTTP, no full directory scan):
+2. `render` is called by Claude Code on every turn. It reads token totals from stdin when Claude Code provides them, then reads three caches (no HTTP, no full directory scan):
    - **Local cost** → `~/.cc-costline/cache.json`
    - **Usage limits** → `/tmp/sl-claude-usage`
    - **ccclub rank** → `/tmp/sl-ccclub-rank`
