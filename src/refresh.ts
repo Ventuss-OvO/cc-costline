@@ -5,20 +5,40 @@ import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { readCache, writeCache, atomicWriteFileSync } from "./cache.js";
 import { collectCosts } from "./collector.js";
-import { shouldRefreshLocalCostCache } from "./statusline.js";
+import { shouldRefreshLocalCostCache, usesThirdPartyApi } from "./statusline.js";
+import { parseLiteLLMPricing } from "./calculator.js";
+import type { PricingTable } from "./calculator.js";
 
 // Anthropic usage API: strict per-token rate limits (~5 req/token). NEVER shrink.
 const ANTHROPIC_TTL_MS = 300_000;
 // ccclub rank: self-hosted, no strict limits — refresh more aggressively for visible data.
 const CCCLUB_TTL_MS = 90_000;
+// Model pricing (LiteLLM): a large static dataset that changes infrequently — refresh
+// once a day. After a failed fetch with no data yet, retry hourly instead of waiting a day.
+const PRICING_TTL_MS = 24 * 60 * 60 * 1000;
+const PRICING_RETRY_MS = 60 * 60 * 1000;
+// LiteLLM's authoritative price/context table for ~all AI models. Tried in order until
+// one yields a usable table: jsDelivr CDN (fast, globally cached) → GitHub raw (main copy)
+// → GitHub raw (the in-package backup copy). All three return the same JSON schema.
+const PRICING_URLS = [
+  "https://cdn.jsdelivr.net/gh/BerriAI/litellm@main/model_prices_and_context_window.json",
+  "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
+  "https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/model_prices_and_context_window_backup.json",
+];
 
 const REFRESH_LOCK = join(tmpdir(), "sl-refresh.lock");
 const REFRESH_LAST = join(tmpdir(), "sl-refresh.last");
-// Lock staleness: refreshAll is bounded by ~15s (local scan + 2× 5s HTTP timeouts),
-// so a lock older than 5 minutes is almost certainly orphaned. The longer window
-// also shrinks the TOCTOU race where a slow refresh could have its lock stolen
-// just before releaseLock runs — practically unreachable now.
+// Lock staleness: in the common path refreshAll finishes in a few seconds (local scan +
+// fast CDN/JSON fetches). The worst case — first run with all 3 pricing sources plus both
+// JSON APIs timing out — is still well under a minute, so a lock older than 5 minutes is
+// almost certainly orphaned. The longer window also shrinks the TOCTOU race where a slow
+// refresh could have its lock stolen just before releaseLock runs — practically unreachable now.
 const HTTP_TIMEOUT_MS = 5_000;
+// The LiteLLM pricing file is ~1.5MB+; give it a longer ceiling than the small JSON APIs.
+// Kept modest so the worst case (all 3 sources unreachable) is ~30s, well under both
+// the 5-min stale-lock window and the 60s SessionEnd/Stop hook timeout. The fast path
+// (jsDelivr CDN responding) returns in ~1-3s and short-circuits the chain.
+const PRICING_HTTP_TIMEOUT_MS = 10_000;
 const LOCK_STALE_MS = 5 * 60 * 1_000;
 
 // Custom UA: avoids Anthropic's claude-code UA rate limiter and identifies the source clearly.
@@ -209,11 +229,15 @@ export function buildCcclubUrl(apiUrl: string, code: string, tz: number): string
 
 // ─── HTTP helper (Node 22 native fetch) ───────────────────────────────────
 
-async function httpGetJSON(url: string, headers: Record<string, string> = {}): Promise<any | null> {
+async function httpGetJSON(
+  url: string,
+  headers: Record<string, string> = {},
+  timeoutMs: number = HTTP_TIMEOUT_MS,
+): Promise<any | null> {
   try {
     const res = await fetch(url, {
       headers: { "User-Agent": USER_AGENT, ...headers },
-      signal: AbortSignal.timeout(HTTP_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) return null;
     return await res.json();
@@ -273,9 +297,19 @@ function loadAccessToken(nowMs: number): string {
 
 function refreshLocalCost(transcriptPath: string): void {
   const cache = readCache();
-  if (!shouldRefreshLocalCostCache(cache, transcriptPath)) return;
+  const pricing = loadPricingTable();
+  const sig = pricing ? "cloud" : "builtin";
+  // When the pricing source flips (cloud pricing just became available, or an
+  // upgrade from a legacy cache with no pricingSig), force a re-price even if the
+  // cost cache is still within its TTL — otherwise the corrected prices wouldn't
+  // appear until the 2-min TTL lapses or the transcript changes.
+  const pricingChanged = (cache?.pricingSig ?? "") !== sig;
+  if (!pricingChanged && !shouldRefreshLocalCostCache(cache, transcriptPath)) return;
   try {
-    const result = collectCosts(undefined, cache?.files);
+    // On a pricing-source flip, discard the incremental per-file cache so historical
+    // cost is recomputed under the new table instead of keeping stale prices.
+    const prevFiles = pricingChanged ? undefined : cache?.files;
+    const result = collectCosts(undefined, prevFiles, pricing);
     // Catastrophic scan failure → preserve cached value rather than zeroing it out.
     // A successful empty scan (ok: true, cost: 0) DOES overwrite — that's the user's true state.
     if (!result.ok) return;
@@ -284,16 +318,38 @@ function refreshLocalCost(transcriptPath: string): void {
       cost30d: result.cost30d,
       updatedAt: new Date().toISOString(),
       files: result.files,
+      pricingSig: sig,
     });
   } catch {}
 }
 
 // ─── Anthropic usage refresh ──────────────────────────────────────────────
 
+function clearUsageCache(cacheFile: string, hitFile: string): void {
+  for (const f of [cacheFile, hitFile]) {
+    try { if (existsSync(f)) unlinkSync(f); } catch {}
+  }
+}
+
 async function refreshClaudeUsage(): Promise<void> {
   const cacheFile = join(tmpdir(), "sl-claude-usage");
   const hitFile = join(tmpdir(), "sl-claude-usage-hit");
   const now = Date.now();
+
+  // Third-party / proxy / Bedrock / Vertex: the OAuth 5h/7d subscription limits
+  // don't apply. Drop any stale cache so render stops showing them, and skip the fetch.
+  if (usesThirdPartyApi()) {
+    clearUsageCache(cacheFile, hitFile);
+    return;
+  }
+
+  const accessToken = loadAccessToken(now);
+  // No Claude subscription token (logged out, or API-key-only billing): there are no
+  // 5h/7d limits to report. Drop any stale cache and skip.
+  if (!accessToken) {
+    clearUsageCache(cacheFile, hitFile);
+    return;
+  }
 
   let staleData: UsageData | null = null;
   let lastAttempt = 0;
@@ -306,9 +362,6 @@ async function refreshClaudeUsage(): Promise<void> {
       cachedTokenHash = cached.tokenHash || "";
     } catch {}
   }
-
-  const accessToken = loadAccessToken(now);
-  if (!accessToken) return;
 
   const currentTokenHash = createHash("sha256").update(accessToken).digest("hex").slice(0, 16);
   // Treat a missing hash as "unknown token" so legacy caches retry immediately on first
@@ -421,11 +474,81 @@ async function refreshCcclubRank(): Promise<void> {
   } catch {}
 }
 
+// ─── Model pricing refresh (LiteLLM) ──────────────────────────────────────
+
+const PRICING_CACHE = join(tmpdir(), "sl-model-pricing");
+
+/**
+ * Read the cached cloud pricing table. Returns undefined when absent/empty/corrupt
+ * so callers transparently fall back to the built-in Claude table.
+ */
+export function loadPricingTable(): PricingTable | undefined {
+  try {
+    const cached = JSON.parse(readFileSync(PRICING_CACHE, "utf-8"));
+    const data = cached?.data;
+    if (data && typeof data === "object" && Object.keys(data).length > 0) {
+      return data as PricingTable;
+    }
+  } catch {}
+  return undefined;
+}
+
+/**
+ * Refresh the cloud model-pricing table from LiteLLM (24h TTL).
+ *
+ * Mirrors the usage refresher's resilience: marks the attempt before the fetch so
+ * repeated failures can't hammer GitHub, and never overwrites good data with a
+ * failed/garbage response. Opt out entirely with CC_COSTLINE_NO_PRICING_FETCH.
+ */
+async function refreshModelPricing(): Promise<void> {
+  if (process.env.CC_COSTLINE_NO_PRICING_FETCH) return;
+  const now = Date.now();
+
+  let staleData: PricingTable | null = null;
+  let lastAttempt = 0;
+  if (existsSync(PRICING_CACHE)) {
+    try {
+      const cached = JSON.parse(readFileSync(PRICING_CACHE, "utf-8"));
+      if (cached?.data && typeof cached.data === "object") staleData = cached.data;
+      lastAttempt = cached?.lastAttempt || 0;
+    } catch {}
+  }
+
+  const hasData = !!staleData && Object.keys(staleData).length > 0;
+  const ttl = hasData ? PRICING_TTL_MS : PRICING_RETRY_MS;
+  if (lastAttempt && now - lastAttempt < ttl) return;
+
+  // Mark attempt before HTTP (preserve stale data) so failures don't hammer the endpoints.
+  try {
+    atomicWriteFileSync(PRICING_CACHE, JSON.stringify({ data: staleData, lastAttempt: now }));
+  } catch {}
+
+  // Try each source in order; first one that yields a usable table wins.
+  let table: PricingTable | null = null;
+  for (const url of PRICING_URLS) {
+    const raw = await httpGetJSON(url, {}, PRICING_HTTP_TIMEOUT_MS);
+    if (!raw) continue;
+    const parsed = parseLiteLLMPricing(raw);
+    if (Object.keys(parsed).length > 0) {
+      table = parsed;
+      break;
+    }
+  }
+  // All sources failed / returned garbage → keep whatever we had (already re-stamped above).
+  if (!table) return;
+
+  try {
+    atomicWriteFileSync(PRICING_CACHE, JSON.stringify({ data: table, lastAttempt: now }));
+  } catch {}
+}
+
 // ─── Orchestration ────────────────────────────────────────────────────────
 
 export async function refreshAll(transcriptPath = ""): Promise<void> {
   if (!acquireLock()) return;
   try {
+    // Pricing first so the local cost scan below can use a freshly-loaded table.
+    await refreshModelPricing();
     refreshLocalCost(transcriptPath);
     await refreshClaudeUsage();
     await refreshCcclubRank();

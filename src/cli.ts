@@ -10,7 +10,7 @@ const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-
 import { collectCosts } from "./collector.js";
 import { readCache, writeCache, writeConfig, readConfig, atomicWriteFileSync, CACHE_DIR } from "./cache.js";
 import { render } from "./statusline.js";
-import { refreshAll } from "./refresh.js";
+import { refreshAll, loadPricingTable } from "./refresh.js";
 
 const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
 const RENDER_COMMAND = "cc-costline render";
@@ -156,7 +156,11 @@ function cmdConfig(args: string[]): void {
 
 function cmdRefresh(): void {
   const prev = readCache();
-  const result = collectCosts(undefined, prev?.files);
+  const pricing = loadPricingTable();
+  const sig = pricing ? "cloud" : "builtin";
+  // Drop the incremental cache when the pricing source changed, so cost is re-priced.
+  const prevFiles = prev?.pricingSig === sig ? prev?.files : undefined;
+  const result = collectCosts(undefined, prevFiles, pricing);
   if (!result.ok) {
     console.error("✗ Cost scan failed — keeping existing cache.");
     process.exitCode = 1;
@@ -167,6 +171,7 @@ function cmdRefresh(): void {
     cost30d: result.cost30d,
     updatedAt: new Date().toISOString(),
     files: result.files,
+    pricingSig: sig,
   });
   console.log(
     `✓ Cache updated — 7d: $${result.cost7d.toFixed(2)} | 30d: $${result.cost30d.toFixed(2)}`

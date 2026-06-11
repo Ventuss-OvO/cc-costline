@@ -81,6 +81,39 @@ export function rankColor(rank: number): string {
   return FG_CYAN;
 }
 
+function envFlagEnabled(v: string | undefined): boolean {
+  if (!v) return false;
+  const s = v.trim().toLowerCase();
+  return s !== "" && s !== "0" && s !== "false" && s !== "no" && s !== "off";
+}
+
+/**
+ * True when Claude Code is talking to a non-Anthropic endpoint — a third-party /
+ * proxy API (via ANTHROPIC_BASE_URL), AWS Bedrock, or Google Vertex.
+ *
+ * The 5h / 7d limits come from the OAuth subscription usage endpoint and only
+ * exist for accounts logged in with a Claude (Pro/Max) subscription. When Claude
+ * Code is pointed at a third-party model API those limits are meaningless, so the
+ * statusline hides them instead of showing a misleading "5h: 0% / 7d: 0%".
+ *
+ * Detection is purely from environment variables inherited from the Claude Code
+ * process (no I/O), keeping render fast.
+ */
+export function usesThirdPartyApi(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (envFlagEnabled(env.CLAUDE_CODE_USE_BEDROCK) || envFlagEnabled(env.CLAUDE_CODE_USE_VERTEX)) {
+    return true;
+  }
+  const baseUrl = (env.ANTHROPIC_BASE_URL || "").trim();
+  if (!baseUrl) return false;
+  try {
+    const host = new URL(baseUrl).host.toLowerCase();
+    return !(host === "anthropic.com" || host === "api.anthropic.com" || host.endsWith(".anthropic.com"));
+  } catch {
+    // Non-empty but unparseable → treat as a custom endpoint.
+    return true;
+  }
+}
+
 // Read-only: usage data from temp cache. Refresh is done by `cc-costline refresh-bg`.
 // Validates shape so a corrupted or legacy cache can't surface `5h: null%` in the UI.
 function readUsageCache(): { fiveHour: number; sevenDay: number; fiveHourResetsAt?: number } | null {
@@ -212,7 +245,9 @@ export function render(input: string): string {
   // All external data is read-only here. refresh-bg writes these caches in the background.
   const cache = readCache();
   const config = readConfig();
-  const claudeUsage = readUsageCache();
+  // Hide 5h/7d when Claude Code is on a third-party API — those subscription
+  // limits don't apply. (refresh-bg also clears the stale cache in this case.)
+  const claudeUsage = usesThirdPartyApi() ? null : readUsageCache();
   const ccclubRank = readRankCache();
 
   // Fire-and-forget background refresh (throttled to once per 30s)

@@ -46,6 +46,10 @@ export interface CacheData {
   updatedAt: string;
   // Optional: per-file scan cache for incremental collectCosts. Absent in legacy cache.
   files?: Record<string, FileCostEntry>;
+  // Pricing source that produced `files` ("cloud" once LiteLLM pricing is loaded,
+  // "builtin" otherwise). When it changes, the incremental per-file cache is
+  // discarded so historical cost is re-priced under the new table. Absent in legacy cache.
+  pricingSig?: string;
 }
 
 export interface ConfigData {

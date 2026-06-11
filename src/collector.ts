@@ -2,6 +2,7 @@ import { readFileSync, readdirSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { calculateCost } from "./calculator.js";
+import type { PricingTable } from "./calculator.js";
 import type { FileCostEntry } from "./cache.js";
 
 const CLAUDE_PROJECTS_DIR = ".claude/projects";
@@ -66,7 +67,7 @@ function dayStartMs(key: string): number {
  * Returns `null` on read failure so the caller does NOT cache an empty entry —
  * the file will be retried on the next scan when permissions/locks clear.
  */
-function parseFile(file: string, mtimeMs: number, size: number, cutoffMs: number): FileCostEntry | null {
+function parseFile(file: string, mtimeMs: number, size: number, cutoffMs: number, pricing?: PricingTable): FileCostEntry | null {
   let content: string;
   try {
     content = readFileSync(file, "utf-8");
@@ -108,6 +109,7 @@ function parseFile(file: string, mtimeMs: number, size: number, cutoffMs: number
       usage.output_tokens || 0,
       usage.cache_creation_input_tokens || 0,
       usage.cache_read_input_tokens || 0,
+      pricing,
     );
 
     const day = dayKey(ts);
@@ -127,6 +129,7 @@ function parseFile(file: string, mtimeMs: number, size: number, cutoffMs: number
 export function collectCosts(
   baseDir?: string,
   prevFiles?: Record<string, FileCostEntry>,
+  pricing?: PricingTable,
 ): CollectResult {
   const projectsDir = baseDir || join(homedir(), CLAUDE_PROJECTS_DIR);
 
@@ -173,7 +176,7 @@ export function collectCosts(
       }
       entry = { mtimeMs: cached.mtimeMs, size: cached.size, byDay: pruned };
     } else {
-      entry = parseFile(file, stat.mtimeMs, stat.size, cutoff30d);
+      entry = parseFile(file, stat.mtimeMs, stat.size, cutoff30d, pricing);
     }
 
     // Skip files we couldn't parse — don't cache an empty entry, retry next scan.
