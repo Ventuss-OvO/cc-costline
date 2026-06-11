@@ -1,43 +1,65 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, readdirSync, lstatSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { calculateCost } from "./calculator.js";
+import type { PricingTable } from "./calculator.js";
 import type { FileCostEntry } from "./cache.js";
 
 const CLAUDE_PROJECTS_DIR = ".claude/projects";
 
-interface CollectResult {
+export interface CollectResult {
   cost7d: number;
   cost30d: number;
   files: Record<string, FileCostEntry>;
-  scanFailed?: boolean;
+  // false → catastrophic scan failure; caller should preserve any cached value.
+  // true → scan completed (even if it found nothing); caller may overwrite cache.
+  ok: boolean;
 }
 
-/** Recursively find all .jsonl files under a directory */
-function findJsonlFiles(dir: string, isRoot = true): { files: string[]; failed: boolean } {
+/**
+ * Recursively find all .jsonl files under a directory.
+ *
+ * - Returns `[]` for a missing root (ENOENT) — treated as "no data yet", not a failure.
+ * - Skips symbolic links to avoid following loops (no need for realpath visited set).
+ * - A root read error (e.g., EACCES) throws so the caller can mark the scan failed and
+ *   preserve cached cost. A nested directory that fails to read is skipped instead, so a
+ *   single unreadable project can't freeze cost updates for all the readable ones.
+ * - `withFileTypes` saves one lstat syscall per entry; filesystems that report
+ *   DT_UNKNOWN (some network mounts) fall back to lstat per entry.
+ */
+function findJsonlFiles(dir: string, isRoot = true): string[] {
   const results: string[] = [];
-  let entries: string[];
+  let entries;
   try {
-    entries = readdirSync(dir);
-  } catch {
-    return { files: results, failed: isRoot };
+    entries = readdirSync(dir, { withFileTypes: true });
+  } catch (err: any) {
+    if (err?.code === "ENOENT") return results;
+    if (isRoot) throw err;
+    return results;
   }
   for (const entry of entries) {
-    const full = join(dir, entry);
-    let stat;
-    try {
-      stat = statSync(full);
-    } catch {
-      continue;
+    const full = join(dir, entry.name);
+    let isLink = entry.isSymbolicLink();
+    let isDir = entry.isDirectory();
+    let isFile = entry.isFile();
+    if (!isLink && !isDir && !isFile) {
+      try {
+        const stat = lstatSync(full);
+        isLink = stat.isSymbolicLink();
+        isDir = stat.isDirectory();
+        isFile = stat.isFile();
+      } catch {
+        continue;
+      }
     }
-    if (stat.isDirectory()) {
-      const nested = findJsonlFiles(full, false);
-      results.push(...nested.files);
-    } else if (entry.endsWith(".jsonl")) {
+    if (isLink) continue;
+    if (isDir) {
+      results.push(...findJsonlFiles(full, false));
+    } else if (isFile && entry.name.endsWith(".jsonl")) {
       results.push(full);
     }
   }
-  return { files: results, failed: false };
+  return results;
 }
 
 function dayKey(ms: number): string {
@@ -49,17 +71,20 @@ function dayStartMs(key: string): number {
   return new Date(key + "T00:00:00Z").getTime();
 }
 
-/** Parse a single jsonl file and bucket per-entry cost by UTC day. */
-function parseFile(file: string, mtimeMs: number, size: number, cutoffMs: number): FileCostEntry {
-  const byDay: Record<string, number> = {};
-
+/**
+ * Parse a single jsonl file and bucket per-entry cost by UTC day.
+ * Returns `null` on read failure so the caller does NOT cache an empty entry —
+ * the file will be retried on the next scan when permissions/locks clear.
+ */
+function parseFile(file: string, mtimeMs: number, size: number, cutoffMs: number, pricing?: PricingTable): FileCostEntry | null {
   let content: string;
   try {
     content = readFileSync(file, "utf-8");
   } catch {
-    return { mtimeMs, size, byDay };
+    return null;
   }
 
+  const byDay: Record<string, number> = {};
   const seen = new Set<string>();
   const lines = content.split("\n");
   for (const line of lines) {
@@ -93,6 +118,7 @@ function parseFile(file: string, mtimeMs: number, size: number, cutoffMs: number
       usage.output_tokens || 0,
       usage.cache_creation_input_tokens || 0,
       usage.cache_read_input_tokens || 0,
+      pricing,
     );
 
     const day = dayKey(ts);
@@ -105,25 +131,26 @@ function parseFile(file: string, mtimeMs: number, size: number, cutoffMs: number
 /**
  * Scan all jsonl files under projectsDir and compute cost7d/cost30d.
  * Reuses prevFiles entries whose mtime+size haven't changed (incremental scan).
+ *
+ * Returns `ok: false` when the scan failed catastrophically (e.g., permissions
+ * error on the root). Callers should preserve their existing cache in that case.
  */
 export function collectCosts(
   baseDir?: string,
   prevFiles?: Record<string, FileCostEntry>,
+  pricing?: PricingTable,
 ): CollectResult {
   const projectsDir = baseDir || join(homedir(), CLAUDE_PROJECTS_DIR);
+
+  let files: string[];
   try {
-    if (!statSync(projectsDir).isDirectory()) {
-      return { cost7d: 0, cost30d: 0, files: {} };
-    }
+    files = findJsonlFiles(projectsDir);
   } catch {
-    return { cost7d: 0, cost30d: 0, files: {} };
+    return { cost7d: 0, cost30d: 0, files: {}, ok: false };
   }
 
-  const scan = findJsonlFiles(projectsDir);
-  const files = scan.files;
-
   if (files.length === 0) {
-    return { cost7d: 0, cost30d: 0, files: {}, scanFailed: scan.failed };
+    return { cost7d: 0, cost30d: 0, files: {}, ok: true };
   }
 
   const now = Date.now();
@@ -139,7 +166,7 @@ export function collectCosts(
   for (const file of files) {
     let stat;
     try {
-      stat = statSync(file);
+      stat = lstatSync(file);
     } catch {
       continue;
     }
@@ -148,9 +175,12 @@ export function collectCosts(
     // (jsonl is append-only, so all entries inside are ≤ mtime).
     if (stat.mtimeMs < cutoff30d) continue;
 
-    let entry: FileCostEntry;
+    let entry: FileCostEntry | null;
     const cached = prev[file];
-    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    // byDay sanity check: a corrupted cache entry must fall through to a fresh
+    // parse instead of throwing in the pruning loop and freezing cache updates.
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size
+        && cached.byDay && typeof cached.byDay === "object") {
       // Prune day buckets that have slid past the 30d window to keep cache from growing
       const pruned: Record<string, number> = {};
       for (const [day, cost] of Object.entries(cached.byDay)) {
@@ -158,8 +188,18 @@ export function collectCosts(
       }
       entry = { mtimeMs: cached.mtimeMs, size: cached.size, byDay: pruned };
     } else {
-      entry = parseFile(file, stat.mtimeMs, stat.size, cutoff30d);
+      entry = parseFile(file, stat.mtimeMs, stat.size, cutoff30d, pricing);
     }
+
+    // Skip files we couldn't parse — don't cache an empty entry, retry next scan.
+    //
+    // Deliberately we do NOT mark the whole scan as ok=false on per-file failures.
+    // A single problematic file (permissions race with another tool, transient lock,
+    // half-rotated log) would otherwise freeze all cache updates indefinitely.
+    // Cost will appear slightly low until the file becomes readable again, which
+    // is preferable to stale-forever; previously-successful entries are still
+    // preserved through the prev/cached path above when mtime+size are unchanged.
+    if (!entry) continue;
 
     out[file] = entry;
 
@@ -170,5 +210,5 @@ export function collectCosts(
     }
   }
 
-  return { cost7d, cost30d, files: out };
+  return { cost7d, cost30d, files: out, ok: true };
 }

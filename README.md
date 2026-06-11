@@ -43,7 +43,7 @@ npm i -g cc-costline@latest
 
 ### Optional integrations
 
-- **Claude usage limits** — reads OAuth credentials from macOS Keychain automatically. Just `claude login` and it works.
+- **Claude usage limits** — reads OAuth credentials from macOS Keychain (with `~/.claude/.credentials.json` fallback on Windows/Linux). Just `claude login` and it works.
 - **ccclub leaderboard** — install [ccclub](https://github.com/mazzzystar/ccclub) (`npm i -g ccclub && ccclub init`). Rank appears automatically.
 
 Both are zero-config: if not available, the segment is silently omitted.
@@ -64,9 +64,9 @@ cc-costline config --period both # Show both periods
 1. `install` configures `~/.claude/settings.json` — sets the statusline command and adds session-end hooks. Your existing settings are preserved.
 2. `render` is called by Claude Code on every turn. It reads token totals from stdin when Claude Code provides them, then reads three caches (no HTTP, no full directory scan):
    - **Local cost** → `~/.cc-costline/cache.json`
-   - **Usage limits** → `/tmp/sl-claude-usage`
-   - **ccclub rank** → `/tmp/sl-ccclub-rank`
-3. If any cache is stale, `render` spawns a detached `cc-costline refresh-bg` subprocess that refreshes data in the background. `/tmp/sl-refresh.lock` prevents concurrent refresh across multiple Claude Code windows, and `/tmp/sl-refresh.last` throttles spawns to once per 30 s.
+   - **Usage limits** → `<os.tmpdir()>/sl-claude-usage`
+   - **ccclub rank** → `<os.tmpdir()>/sl-ccclub-rank`
+3. If any cache is stale, `render` spawns a detached `cc-costline refresh-bg` subprocess that refreshes data in the background. `<os.tmpdir()>/sl-refresh.lock` prevents concurrent refresh across multiple Claude Code windows, and `<os.tmpdir()>/sl-refresh.last` throttles spawns to once per 30 s. All `sl-*` file names carry a per-user suffix, so multiple users sharing a Linux `/tmp` never collide.
 4. The background refresh honors per-source TTLs:
    - **Local cost** (2-min TTL): incremental scan — per-file `mtime+size` cache reuses entries that haven't changed (~25 ms typical vs ~2 s cold on 1000+ jsonl files)
    - **Usage limits** (5-min retry, token-aware): fetches `api.anthropic.com/api/oauth/usage`. Detects OAuth token rotation to retry immediately with fresh rate limit quota. Stale data persists across failures.
@@ -80,6 +80,9 @@ Prices per million tokens (USD):
 
 | Model | Input | Output | Cache Write | Cache Read |
 |-------|------:|-------:|------------:|-----------:|
+| Fable 5 | $10 | $50 | $12.50 | $1.00 |
+| Opus 4.8 | $5 | $25 | $6.25 | $0.50 |
+| Opus 4.7 | $5 | $25 | $6.25 | $0.50 |
 | Opus 4.6 | $5 | $25 | $6.25 | $0.50 |
 | Opus 4.5 | $5 | $25 | $6.25 | $0.50 |
 | Opus 4.1 | $15 | $75 | $18.75 | $1.50 |

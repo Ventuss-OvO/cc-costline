@@ -64,9 +64,9 @@ cc-costline config --period both # 同时显示两个周期
 1. `install` 配置 `~/.claude/settings.json` — 设置状态栏命令并添加会话结束 hook。你的现有设置会被保留。
 2. `render` 在每次对话时被 Claude Code 调用。它优先读取 Claude Code stdin 中的 token 总数，然后读取三份缓存（不发起 HTTP，不扫描全目录）：
    - **本地费用** → `~/.cc-costline/cache.json`
-   - **使用率** → `/tmp/sl-claude-usage`
-   - **ccclub 排名** → `/tmp/sl-ccclub-rank`
-3. 任一缓存过期时，`render` 启动 detached 子进程 `cc-costline refresh-bg` 在后台刷新。`/tmp/sl-refresh.lock` 防止多个 Claude Code 窗口并发刷新，`/tmp/sl-refresh.last` 限制 30 秒内最多触发一次。
+   - **使用率** → `<os.tmpdir()>/sl-claude-usage`
+   - **ccclub 排名** → `<os.tmpdir()>/sl-ccclub-rank`
+3. 任一缓存过期时，`render` 启动 detached 子进程 `cc-costline refresh-bg` 在后台刷新。`<os.tmpdir()>/sl-refresh.lock` 防止多个 Claude Code 窗口并发刷新，`<os.tmpdir()>/sl-refresh.last` 限制 30 秒内最多触发一次。所有 `sl-*` 文件名都带按用户的后缀，避免共享 Linux `/tmp` 上的多用户冲突。
 4. 后台刷新遵守各数据源各自的 TTL：
    - **本地费用**（2 分钟 TTL）：增量扫描 — 按文件 `mtime+size` 缓存，未变更的文件直接复用（1000+ jsonl 时典型 25 ms vs 冷启动 2 s）
    - **使用率**（5 分钟重试，感知 token 轮换）：从 `api.anthropic.com/api/oauth/usage` 获取。检测 OAuth token 轮换后立即重试（新 token 有新的速率配额）。API 失败时保留历史数据。
@@ -80,6 +80,9 @@ cc-costline config --period both # 同时显示两个周期
 
 | 模型 | 输入 | 输出 | 缓存写入 | 缓存读取 |
 |------|-----:|-----:|---------:|---------:|
+| Fable 5 | $10 | $50 | $12.50 | $1.00 |
+| Opus 4.8 | $5 | $25 | $6.25 | $0.50 |
+| Opus 4.7 | $5 | $25 | $6.25 | $0.50 |
 | Opus 4.6 | $5 | $25 | $6.25 | $0.50 |
 | Opus 4.5 | $5 | $25 | $6.25 | $0.50 |
 | Opus 4.1 | $15 | $75 | $18.75 | $1.50 |

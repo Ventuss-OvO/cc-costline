@@ -50,14 +50,24 @@ describe("collectCosts", () => {
     const result = collectCosts(tmpDir);
     assert.equal(result.cost7d, 0);
     assert.equal(result.cost30d, 0);
-    assert.equal(result.scanFailed, false);
+    assert.equal(result.ok, true, "empty dir is a successful scan, not a failure");
   });
 
   it("returns zeros for non-existent directory", () => {
     const result = collectCosts(join(tmpDir, "nope"));
     assert.equal(result.cost7d, 0);
     assert.equal(result.cost30d, 0);
-    assert.equal(result.scanFailed, undefined);
+    // ENOENT is treated as "no data yet", not a catastrophic failure — the
+    // caller may overwrite cache with 0 in that case.
+    assert.equal(result.ok, true);
+  });
+
+  it("marks a successful scan with ok=true", () => {
+    const dir = join(tmpDir, "project");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "session.jsonl"), jsonlLine() + "\n");
+    const result = collectCosts(tmpDir);
+    assert.equal(result.ok, true);
   });
 
   it("calculates cost from a single jsonl file", () => {
@@ -207,6 +217,21 @@ describe("collectCosts", () => {
     assert.ok(Math.abs(result.cost7d - 0.0175) < 0.001, `expected ~0.0175, got ${result.cost7d}`);
   });
 
+  it("prices claude-fable-5 from the built-in table when no cloud table is loaded", () => {
+    const dir = join(tmpDir, "project");
+    mkdirSync(dir, { recursive: true });
+
+    // fable: input=$10/M, output=$50/M → 1000*10/1M + 500*50/1M = 0.01 + 0.025 = 0.035
+    const line = jsonlLine({
+      requestId: "fable1",
+      message: { model: "claude-fable-5", usage: { input_tokens: 1000, output_tokens: 500, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
+    });
+    writeFileSync(join(dir, "session.jsonl"), line + "\n");
+
+    const result = collectCosts(tmpDir);
+    assert.ok(Math.abs(result.cost7d - 0.035) < 0.001, `expected ~0.035, got ${result.cost7d}`);
+  });
+
   it("does not falsely deduplicate entries without requestId that differ in model or cache tokens", () => {
     const dir = join(tmpDir, "project");
     mkdirSync(dir, { recursive: true });
@@ -340,6 +365,20 @@ describe("collectCosts", () => {
     const result = collectCosts(tmpDir, prev) as any;
     const entry = result.files[filePath];
     assert.equal(entry.byDay[ancientDay], undefined, "ancient day should be pruned");
+  });
+
+  it("re-parses instead of throwing when a cached entry has a corrupted byDay", () => {
+    const dir = join(tmpDir, "project");
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, "session.jsonl");
+    writeFileSync(filePath, jsonlLine({ requestId: "r1" }) + "\n");
+    const stat = statSync(filePath);
+
+    // mtime+size match so the entry would be "reusable", but byDay is poisoned.
+    const prev = { [filePath]: { mtimeMs: stat.mtimeMs, size: stat.size, byDay: null } } as any;
+    const result = collectCosts(tmpDir, prev);
+    assert.equal(result.ok, true);
+    assert.ok(Math.abs(result.cost7d - 0.0105) < 0.001, `expected fresh-parse cost, got ${result.cost7d}`);
   });
 
   it("includes cache token costs", () => {

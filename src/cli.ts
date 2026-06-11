@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { readFileSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -8,9 +8,9 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 import { collectCosts } from "./collector.js";
-import { readCache, writeCache, writeConfig, readConfig, CACHE_DIR } from "./cache.js";
+import { readCache, writeCache, writeConfig, readConfig, atomicWriteFileSync, stripBom, CACHE_DIR } from "./cache.js";
 import { render } from "./statusline.js";
-import { refreshAll } from "./refresh.js";
+import { refreshAll, loadPricingTable } from "./refresh.js";
 
 const SETTINGS_PATH = join(homedir(), ".claude", "settings.json");
 const RENDER_COMMAND = "cc-costline render";
@@ -22,7 +22,8 @@ function readSettings(): any {
   if (!existsSync(SETTINGS_PATH)) return {};
   const raw = readFileSync(SETTINGS_PATH, "utf-8");
   try {
-    return JSON.parse(raw);
+    // Tolerate a UTF-8 BOM — Windows editors commonly save settings.json with one.
+    return JSON.parse(stripBom(raw));
   } catch {
     console.error(`✗ Failed to parse ${SETTINGS_PATH} — aborting to avoid overwriting your config.`);
     console.error("  Please fix the JSON syntax and retry.");
@@ -31,12 +32,17 @@ function readSettings(): any {
 }
 
 function saveSettings(settings: any): void {
-  writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
+  // `~/.claude` may not exist on a fresh install — create it so the first-run
+  // `cc-costline install` doesn't crash with ENOENT below.
+  // Atomic write protects against bricking Claude Code if we're interrupted
+  // mid-write of settings.json (which would otherwise leave invalid JSON behind).
+  mkdirSync(dirname(SETTINGS_PATH), { recursive: true });
+  atomicWriteFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2) + "\n");
 }
 
 function readStdin(): string {
   try {
-    return readFileSync("/dev/stdin", "utf-8");
+    return readFileSync(0, "utf-8");
   } catch {
     return "";
   }
@@ -54,16 +60,20 @@ function cmdInstall(): void {
   };
 
   // 2. Add SessionEnd hook for background refresh
-  if (!settings.hooks) settings.hooks = {};
+  // Defensively normalize: malformed settings (hooks = array or string) shouldn't crash install.
+  if (!settings.hooks || typeof settings.hooks !== "object" || Array.isArray(settings.hooks)) {
+    settings.hooks = {};
+  }
 
   for (const event of ["SessionEnd", "Stop"] as const) {
-    if (!settings.hooks[event]) settings.hooks[event] = [];
+    if (!Array.isArray(settings.hooks[event])) settings.hooks[event] = [];
 
     // Remove any old cc-costline / cc-statusline hooks first
     settings.hooks[event] = settings.hooks[event].filter(
-      (h: any) => !h.hooks?.some((hh: any) =>
-        hh.command?.includes("cc-costline") || hh.command?.includes("cc-statusline")
-      )
+      (h: any) => !(Array.isArray(h?.hooks) && h.hooks.some((hh: any) =>
+        typeof hh?.command === "string" &&
+        (hh.command.includes("cc-costline") || hh.command.includes("cc-statusline"))
+      ))
     );
 
     // Add fresh hook
@@ -100,21 +110,24 @@ function cmdUninstall(): void {
   const settings = readSettings();
 
   // Remove statusLine if it's ours
-  if (settings.statusLine?.command?.includes("cc-costline") ||
-      settings.statusLine?.command?.includes("cc-statusline")) {
+  const slCmd = settings.statusLine?.command;
+  if (typeof slCmd === "string" && (slCmd.includes("cc-costline") || slCmd.includes("cc-statusline"))) {
     delete settings.statusLine;
   }
 
   // Remove our hooks from SessionEnd and Stop
-  for (const event of ["SessionEnd", "Stop"] as const) {
-    if (!settings.hooks?.[event]) continue;
-    settings.hooks[event] = settings.hooks[event].filter(
-      (h: any) => !h.hooks?.some((hh: any) =>
-        hh.command?.includes("cc-costline") || hh.command?.includes("cc-statusline")
-      )
-    );
-    if (settings.hooks[event].length === 0) {
-      delete settings.hooks[event];
+  if (settings.hooks && typeof settings.hooks === "object" && !Array.isArray(settings.hooks)) {
+    for (const event of ["SessionEnd", "Stop"] as const) {
+      if (!Array.isArray(settings.hooks[event])) continue;
+      settings.hooks[event] = settings.hooks[event].filter(
+        (h: any) => !(Array.isArray(h?.hooks) && h.hooks.some((hh: any) =>
+          typeof hh?.command === "string" &&
+          (hh.command.includes("cc-costline") || hh.command.includes("cc-statusline"))
+        ))
+      );
+      if (settings.hooks[event].length === 0) {
+        delete settings.hooks[event];
+      }
     }
   }
 
@@ -144,12 +157,22 @@ function cmdConfig(args: string[]): void {
 
 function cmdRefresh(): void {
   const prev = readCache();
-  const result = collectCosts(undefined, prev?.files);
+  const pricing = loadPricingTable();
+  const sig = pricing ? "cloud" : "builtin";
+  // Drop the incremental cache when the pricing source changed, so cost is re-priced.
+  const prevFiles = prev?.pricingSig === sig ? prev?.files : undefined;
+  const result = collectCosts(undefined, prevFiles, pricing);
+  if (!result.ok) {
+    console.error("✗ Cost scan failed — keeping existing cache.");
+    process.exitCode = 1;
+    return;
+  }
   writeCache({
     cost7d: result.cost7d,
     cost30d: result.cost30d,
     updatedAt: new Date().toISOString(),
     files: result.files,
+    pricingSig: sig,
   });
   console.log(
     `✓ Cache updated — 7d: $${result.cost7d.toFixed(2)} | 30d: $${result.cost30d.toFixed(2)}`
@@ -159,8 +182,12 @@ function cmdRefresh(): void {
 function cmdRender(): void {
   const input = readStdin();
   if (!input.trim()) return;
-  const output = render(input);
-  if (output) process.stdout.write(output);
+  try {
+    const output = render(input);
+    if (output) process.stdout.write(output);
+  } catch {
+    // The statusline must never surface a crash into Claude Code — blank beats noise.
+  }
 }
 
 async function cmdRefreshBg(args: string[]): Promise<void> {

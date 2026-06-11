@@ -32,14 +32,15 @@ test/
 ├── calculator.test.ts  # Unit tests for pricing lookup and cost calculation
 ├── cache.test.ts       # Cache/config read/write roundtrip tests
 ├── collector.test.ts   # Cost collection with mock jsonl files
-└── render.test.ts      # Render output format and edge cases
+├── render.test.ts      # Render output format and edge cases
+└── refresh.test.ts     # Pure parsers + ownership-verified lock primitives
 ```
 
 ## Key Design Decisions
 
 - **Non-blocking render**: `render()` prefers Claude Code stdin token totals, reads cache files, and only falls back to transcript token counting for older inputs. HTTP and full jsonl directory scans run in detached `refresh-bg`.
 - **Split TTLs**: Local cost 2 min, Anthropic usage 5 min, ccclub rank 90 s. Local cost also refreshes immediately when transcript mtime is newer than cache.
-- **Background refresh**: `refresh-bg` uses `/tmp/sl-refresh.lock` to prevent concurrent refreshes across windows and `/tmp/sl-refresh.last` to throttle spawns.
+- **Background refresh**: `refresh-bg` uses `<os.tmpdir()>/sl-refresh.lock` to prevent concurrent refreshes across windows and `<os.tmpdir()>/sl-refresh.last` to throttle spawns. All `sl-*` names are per-user suffixed (`tmpFilePath()`) so a shared Linux `/tmp` can't collide across users.
 - **No curl shelling for APIs**: Usage and ccclub API calls use Node `fetch`; Keychain lookup uses `execFileSync` without shell interpolation.
 - **Deduplication**: Token cost collection deduplicates by requestId; fallback key includes model + all token types to avoid false dedup.
 - **Stale fallback**: API failures preserve stale data. Local cost preserves stale data only when scanning fails; a successful zero-cost scan clears old totals.
@@ -49,4 +50,4 @@ test/
 
 - Keep zero runtime dependencies.
 - All formatting functions should be pure and tested.
-- Cache files go to `/tmp/sl-*`, config to `~/.cc-costline/`.
+- Cache files go to `<os.tmpdir()>/sl-*` (cross-platform: `/tmp` on Linux/macOS, `%TEMP%` on Windows), config to `~/.cc-costline/`.

@@ -64,9 +64,9 @@ cc-costline config --period both # 両方の期間を表示
 1. `install` は `~/.claude/settings.json` を設定 — ステータスラインコマンドとセッション終了フックを追加します。既存の設定は保持されます。
 2. `render` は毎ターン Claude Code から呼び出されます。Claude Code が提供する場合は stdin のトークン合計を読み、その後 3 つのキャッシュを読みます（HTTP もディレクトリ全スキャンも行いません）：
    - **ローカルコスト** → `~/.cc-costline/cache.json`
-   - **使用率** → `/tmp/sl-claude-usage`
-   - **ccclub ランキング** → `/tmp/sl-ccclub-rank`
-3. キャッシュが期限切れの場合、`render` は detached サブプロセス `cc-costline refresh-bg` を起動してバックグラウンドで更新します。`/tmp/sl-refresh.lock` で複数 Claude Code ウィンドウ間の並行更新を防ぎ、`/tmp/sl-refresh.last` で 30 秒に 1 回までに制限します。
+   - **使用率** → `<os.tmpdir()>/sl-claude-usage`
+   - **ccclub ランキング** → `<os.tmpdir()>/sl-ccclub-rank`
+3. キャッシュが期限切れの場合、`render` は detached サブプロセス `cc-costline refresh-bg` を起動してバックグラウンドで更新します。`<os.tmpdir()>/sl-refresh.lock` で複数 Claude Code ウィンドウ間の並行更新を防ぎ、`<os.tmpdir()>/sl-refresh.last` で 30 秒に 1 回までに制限します。`sl-*` ファイル名にはユーザーごとのサフィックスが付くため、共有の Linux `/tmp` でもユーザー間で衝突しません。
 4. バックグラウンド更新は各ソースの TTL に従います：
    - **ローカルコスト**（2 分 TTL）：インクリメンタルスキャン — ファイル `mtime+size` でキャッシュし、変更のないファイルはそのまま再利用（1000+ jsonl で典型 25 ms vs コールド 2 s）
    - **使用率**（5 分リトライ、トークンローテーション検知）：`api.anthropic.com/api/oauth/usage` から取得。OAuth トークンのローテーションを検知して即座にリトライ（新トークン＝新レート制限枠）。API 失敗時も過去のデータを保持。
@@ -80,6 +80,9 @@ cc-costline config --period both # 両方の期間を表示
 
 | モデル | 入力 | 出力 | キャッシュ書込 | キャッシュ読取 |
 |--------|-----:|-----:|-------------:|-------------:|
+| Fable 5 | $10 | $50 | $12.50 | $1.00 |
+| Opus 4.8 | $5 | $25 | $6.25 | $0.50 |
+| Opus 4.7 | $5 | $25 | $6.25 | $0.50 |
 | Opus 4.6 | $5 | $25 | $6.25 | $0.50 |
 | Opus 4.5 | $5 | $25 | $6.25 | $0.50 |
 | Opus 4.1 | $15 | $75 | $18.75 | $1.50 |

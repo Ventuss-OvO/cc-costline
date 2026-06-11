@@ -7,12 +7,47 @@ import { tmpdir } from "node:os";
 // Disable background refresh spawn before importing statusline
 process.env.CC_COSTLINE_NO_SPAWN = "1";
 
-const { render } = await import("../dist/statusline.js");
+const { render, formatTokens, formatCost } = await import("../dist/statusline.js");
 
 // Helper to strip ANSI escape codes for easier assertions
 function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
+
+describe("formatTokens", () => {
+  it("formats plain / k / M tiers", () => {
+    assert.equal(formatTokens(0), "0");
+    assert.equal(formatTokens(999), "999");
+    assert.equal(formatTokens(1000), "1.0k");
+    assert.equal(formatTokens(1500), "1.5k");
+    assert.equal(formatTokens(1_000_000), "1.0M");
+    assert.equal(formatTokens(12_340_000), "12.3M");
+  });
+
+  it("promotes values that round to 1000.0k into the M tier", () => {
+    assert.equal(formatTokens(999_949), "999.9k");
+    assert.equal(formatTokens(999_999), "1.0M");
+  });
+});
+
+describe("formatCost", () => {
+  it("formats each magnitude tier", () => {
+    assert.equal(formatCost(0), "$0.00");
+    assert.equal(formatCost(9.99), "$9.99");
+    assert.equal(formatCost(10), "$10.0");
+    assert.equal(formatCost(99.9), "$99.9");
+    assert.equal(formatCost(100), "$100");
+    assert.equal(formatCost(999), "$999");
+    assert.equal(formatCost(1000), "$1,000");
+    assert.equal(formatCost(1234.56), "$1,235");
+  });
+
+  it("keeps tier formats consistent when toFixed rounds across a boundary", () => {
+    assert.equal(formatCost(9.999), "$10.0");  // was "$10.00"
+    assert.equal(formatCost(99.99), "$100");   // was "$100.0"
+    assert.equal(formatCost(999.9), "$1,000"); // was "$1000" (no separator)
+  });
+});
 
 describe("render", () => {
   it("returns empty string for invalid JSON", () => {
@@ -23,6 +58,16 @@ describe("render", () => {
 
   it("returns empty string for empty input", () => {
     assert.equal(render(""), "");
+  });
+
+  it("tolerates a UTF-8 BOM before the stdin JSON (PowerShell pipes)", () => {
+    const input = "\uFEFF" + JSON.stringify({
+      cost: { total_cost_usd: 1.5 },
+      model: { display_name: "Test" },
+      context_window: { used_percentage: 10 },
+    });
+    const plain = stripAnsi(render(input));
+    assert.ok(plain.includes("$1.50"), `should render despite BOM, got: "${plain}"`);
   });
 
   it("renders basic session data", () => {
@@ -50,6 +95,20 @@ describe("render", () => {
 
     assert.ok(plain.includes("$0.00"), `should show $0.00, got: ${plain}`);
     assert.ok(plain.includes("0%"), `should show 0%, got: ${plain}`);
+  });
+
+  it("survives malformed field types without crashing", () => {
+    const input = JSON.stringify({
+      cost: { total_cost_usd: "not-a-number" },
+      model: { display_name: 42 },
+      context_window: { used_percentage: "95%" },
+      transcript_path: 123,
+    });
+    const plain = stripAnsi(render(input));
+
+    assert.ok(plain.includes("$0.00"), `non-numeric cost should fall back to $0.00, got: ${plain}`);
+    assert.ok(plain.includes("—"), `non-string model should fall back to —, got: ${plain}`);
+    assert.ok(plain.includes("0%"), `non-numeric context should fall back to 0%, got: ${plain}`);
   });
 
   it("handles missing fields gracefully", () => {
@@ -120,6 +179,41 @@ describe("render", () => {
 
       assert.ok(plain.includes("1.5k"), `should show stdin token total, got: ${plain}`);
       assert.ok(!plain.includes("7.0k"), `should not read transcript when stdin totals exist, got: ${plain}`);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("counts cache tokens (creation + read) toward total when falling back to transcript", () => {
+    const tmpDir = mkdtempSync(join(tmpdir(), "cc-render-test-"));
+    try {
+      const transcriptPath = join(tmpDir, "session.jsonl");
+      const lines = [
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            usage: {
+              input_tokens: 1000,
+              output_tokens: 500,
+              cache_creation_input_tokens: 2000,
+              cache_read_input_tokens: 6500,
+            },
+          },
+        }),
+      ].join("\n");
+      writeFileSync(transcriptPath, lines + "\n");
+
+      const input = JSON.stringify({
+        cost: { total_cost_usd: 1.5 },
+        model: { display_name: "Sonnet 4.5" },
+        context_window: { used_percentage: 25 },
+        transcript_path: transcriptPath,
+      });
+      const output = render(input);
+      const plain = stripAnsi(output);
+
+      // 1000+500+2000+6500 = 10000 → "10.0k"
+      assert.ok(plain.includes("10.0k"), `should sum all four token types, got: ${plain}`);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
