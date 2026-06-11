@@ -7,12 +7,47 @@ import { tmpdir } from "node:os";
 // Disable background refresh spawn before importing statusline
 process.env.CC_COSTLINE_NO_SPAWN = "1";
 
-const { render } = await import("../dist/statusline.js");
+const { render, formatTokens, formatCost } = await import("../dist/statusline.js");
 
 // Helper to strip ANSI escape codes for easier assertions
 function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*m/g, "");
 }
+
+describe("formatTokens", () => {
+  it("formats plain / k / M tiers", () => {
+    assert.equal(formatTokens(0), "0");
+    assert.equal(formatTokens(999), "999");
+    assert.equal(formatTokens(1000), "1.0k");
+    assert.equal(formatTokens(1500), "1.5k");
+    assert.equal(formatTokens(1_000_000), "1.0M");
+    assert.equal(formatTokens(12_340_000), "12.3M");
+  });
+
+  it("promotes values that round to 1000.0k into the M tier", () => {
+    assert.equal(formatTokens(999_949), "999.9k");
+    assert.equal(formatTokens(999_999), "1.0M");
+  });
+});
+
+describe("formatCost", () => {
+  it("formats each magnitude tier", () => {
+    assert.equal(formatCost(0), "$0.00");
+    assert.equal(formatCost(9.99), "$9.99");
+    assert.equal(formatCost(10), "$10.0");
+    assert.equal(formatCost(99.9), "$99.9");
+    assert.equal(formatCost(100), "$100");
+    assert.equal(formatCost(999), "$999");
+    assert.equal(formatCost(1000), "$1,000");
+    assert.equal(formatCost(1234.56), "$1,235");
+  });
+
+  it("keeps tier formats consistent when toFixed rounds across a boundary", () => {
+    assert.equal(formatCost(9.999), "$10.0");  // was "$10.00"
+    assert.equal(formatCost(99.99), "$100");   // was "$100.0"
+    assert.equal(formatCost(999.9), "$1,000"); // was "$1000" (no separator)
+  });
+});
 
 describe("render", () => {
   it("returns empty string for invalid JSON", () => {

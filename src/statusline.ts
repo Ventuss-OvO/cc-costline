@@ -24,17 +24,30 @@ const FG_CYAN      = "\x1b[38;5;109m";
 const FG_WHITE     = "\x1b[38;5;255m";
 const RESET        = "\x1b[0m";
 
+// Both formatters post-check the rounded string at tier boundaries: toFixed can
+// round a value INTO the next tier (999_999 → "1000.0k", $999.9 → "$1000"), and
+// string comparison is float-proof where a numeric threshold would not be.
 export function formatTokens(t: number): string {
   if (t >= 1_000_000) return (t / 1_000_000).toFixed(1) + "M";
-  if (t >= 1_000) return (t / 1_000).toFixed(1) + "k";
+  if (t >= 1_000) {
+    const k = (t / 1_000).toFixed(1);
+    return k === "1000.0" ? "1.0M" : k + "k";
+  }
   return String(t);
 }
 
 export function formatCost(n: number): string {
   if (n >= 1000) return "$" + Math.round(n).toLocaleString("en-US");
-  if (n >= 100) return "$" + n.toFixed(0);
-  if (n >= 10) return "$" + n.toFixed(1);
-  return "$" + n.toFixed(2);
+  if (n >= 100) {
+    const s = n.toFixed(0);
+    return s === "1000" ? "$1,000" : "$" + s;
+  }
+  if (n >= 10) {
+    const s = n.toFixed(1);
+    return s === "100.0" ? "$100" : "$" + s;
+  }
+  const s = n.toFixed(2);
+  return s === "10.00" ? "$10.0" : "$" + s;
 }
 
 export function ctxColor(pct: number): string {
