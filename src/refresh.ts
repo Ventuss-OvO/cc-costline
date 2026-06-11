@@ -1,9 +1,9 @@
 import { readFileSync, writeFileSync, existsSync, unlinkSync, statSync, utimesSync, closeSync, openSync } from "node:fs";
 import { join } from "node:path";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { readCache, writeCache, atomicWriteFileSync, stripBom } from "./cache.js";
+import { readCache, writeCache, atomicWriteFileSync, stripBom, tmpFilePath } from "./cache.js";
 import { collectCosts } from "./collector.js";
 import { shouldRefreshLocalCostCache, usesThirdPartyApi } from "./statusline.js";
 import { parseLiteLLMPricing } from "./calculator.js";
@@ -26,8 +26,8 @@ const PRICING_URLS = [
   "https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/model_prices_and_context_window_backup.json",
 ];
 
-const REFRESH_LOCK = join(tmpdir(), "sl-refresh.lock");
-const REFRESH_LAST = join(tmpdir(), "sl-refresh.last");
+const REFRESH_LOCK = tmpFilePath("sl-refresh.lock");
+const REFRESH_LAST = tmpFilePath("sl-refresh.last");
 // Lock staleness: in the common path refreshAll finishes in a few seconds (local scan +
 // fast CDN/JSON fetches). The worst case — first run with all 3 pricing sources plus both
 // JSON APIs timing out — is still well under a minute, so a lock older than 5 minutes is
@@ -332,8 +332,8 @@ function clearUsageCache(cacheFile: string, hitFile: string): void {
 }
 
 async function refreshClaudeUsage(): Promise<void> {
-  const cacheFile = join(tmpdir(), "sl-claude-usage");
-  const hitFile = join(tmpdir(), "sl-claude-usage-hit");
+  const cacheFile = tmpFilePath("sl-claude-usage");
+  const hitFile = tmpFilePath("sl-claude-usage-hit");
   const now = Date.now();
 
   // Third-party / proxy / Bedrock / Vertex: the OAuth 5h/7d subscription limits
@@ -428,7 +428,7 @@ async function refreshClaudeUsage(): Promise<void> {
 async function refreshCcclubRank(): Promise<void> {
   const configPath = join(homedir(), ".ccclub", "config.json");
   if (!existsSync(configPath)) return;
-  const cacheFile = join(tmpdir(), "sl-ccclub-rank");
+  const cacheFile = tmpFilePath("sl-ccclub-rank");
   const now = Date.now();
 
   let staleData: RankData | null = null;
@@ -477,7 +477,7 @@ async function refreshCcclubRank(): Promise<void> {
 
 // ─── Model pricing refresh (LiteLLM) ──────────────────────────────────────
 
-const PRICING_CACHE = join(tmpdir(), "sl-model-pricing");
+const PRICING_CACHE = tmpFilePath("sl-model-pricing");
 
 /**
  * Read the cached cloud pricing table. Returns undefined when absent/empty/corrupt

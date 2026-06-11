@@ -66,7 +66,7 @@ cc-costline config --period both # 同时显示两个周期
    - **本地费用** → `~/.cc-costline/cache.json`
    - **使用率** → `<os.tmpdir()>/sl-claude-usage`
    - **ccclub 排名** → `<os.tmpdir()>/sl-ccclub-rank`
-3. 任一缓存过期时，`render` 启动 detached 子进程 `cc-costline refresh-bg` 在后台刷新。`<os.tmpdir()>/sl-refresh.lock` 防止多个 Claude Code 窗口并发刷新，`<os.tmpdir()>/sl-refresh.last` 限制 30 秒内最多触发一次。
+3. 任一缓存过期时，`render` 启动 detached 子进程 `cc-costline refresh-bg` 在后台刷新。`<os.tmpdir()>/sl-refresh.lock` 防止多个 Claude Code 窗口并发刷新，`<os.tmpdir()>/sl-refresh.last` 限制 30 秒内最多触发一次。所有 `sl-*` 文件名都带按用户的后缀，避免共享 Linux `/tmp` 上的多用户冲突。
 4. 后台刷新遵守各数据源各自的 TTL：
    - **本地费用**（2 分钟 TTL）：增量扫描 — 按文件 `mtime+size` 缓存，未变更的文件直接复用（1000+ jsonl 时典型 25 ms vs 冷启动 2 s）
    - **使用率**（5 分钟重试，感知 token 轮换）：从 `api.anthropic.com/api/oauth/usage` 获取。检测 OAuth token 轮换后立即重试（新 token 有新的速率配额）。API 失败时保留历史数据。

@@ -1,8 +1,6 @@
 import { readFileSync, writeFileSync, existsSync, statSync, utimesSync } from "node:fs";
 import { spawn } from "node:child_process";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
-import { readCache, readConfig, stripBom } from "./cache.js";
+import { readCache, readConfig, stripBom, tmpFilePath } from "./cache.js";
 import type { CacheData } from "./cache.js";
 
 // TTL for local cost cache (2 minutes) — used by refresh-bg to decide whether to rescan jsonl
@@ -12,7 +10,7 @@ const CACHE_TTL_MS = 120_000;
 // refresh-bg internally honors per-API TTLs (Anthropic 5min, ccclub 90s) so this is just
 // a coarse "don't fork node every turn" gate.
 const REFRESH_SPAWN_THROTTLE_MS = 30_000;
-const REFRESH_LAST_MARKER = join(tmpdir(), "sl-refresh.last");
+const REFRESH_LAST_MARKER = tmpFilePath("sl-refresh.last");
 
 // ANSI colors (matching original statusline.sh)
 const FG_GRAY      = "\x1b[38;5;245m";
@@ -118,7 +116,7 @@ export function usesThirdPartyApi(env: NodeJS.ProcessEnv = process.env): boolean
 // Validates shape so a corrupted or legacy cache can't surface `5h: null%` in the UI.
 function readUsageCache(): { fiveHour: number; sevenDay: number; fiveHourResetsAt?: number } | null {
   try {
-    const cached = JSON.parse(readFileSync(join(tmpdir(), "sl-claude-usage"), "utf-8"));
+    const cached = JSON.parse(readFileSync(tmpFilePath("sl-claude-usage"), "utf-8"));
     const d = cached?.data;
     if (!d || typeof d !== "object") return null;
     if (typeof d.fiveHour !== "number" || !isFinite(d.fiveHour)) return null;
@@ -139,7 +137,7 @@ function readUsageCache(): { fiveHour: number; sevenDay: number; fiveHourResetsA
 // Read-only: ccclub rank from temp cache. Validates shape so render can't crash on bad data.
 function readRankCache(): { rank: number; total: number; cost: number } | null {
   try {
-    const cached = JSON.parse(readFileSync(join(tmpdir(), "sl-ccclub-rank"), "utf-8"));
+    const cached = JSON.parse(readFileSync(tmpFilePath("sl-ccclub-rank"), "utf-8"));
     const d = cached?.data;
     if (!d || typeof d !== "object") return null;
     if (typeof d.rank !== "number" || !isFinite(d.rank)) return null;

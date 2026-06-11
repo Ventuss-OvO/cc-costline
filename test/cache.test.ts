@@ -1,9 +1,9 @@
 import { describe, it, beforeEach, afterEach } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, rmSync, mkdtempSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, basename, dirname } from "node:path";
 import { tmpdir } from "node:os";
-import { readCache, writeCache, readConfig, writeConfig } from "../dist/cache.js";
+import { readCache, writeCache, readConfig, writeConfig, tmpFilePath } from "../dist/cache.js";
 import type { CacheData, ConfigData } from "../dist/cache.js";
 
 let tmpDir: string;
@@ -86,5 +86,24 @@ describe("writeConfig + readConfig roundtrip", () => {
     mkdirSync(tmpDir, { recursive: true });
     writeFileSync(join(tmpDir, "config.json"), "\uFEFF" + JSON.stringify({ period: "30d" }));
     assert.deepEqual(readConfig(tmpDir), { period: "30d" });
+  });
+});
+
+describe("tmpFilePath", () => {
+  it("returns a path directly inside os.tmpdir()", () => {
+    assert.equal(dirname(tmpFilePath("sl-x")), tmpdir());
+  });
+
+  it("is stable across calls for the same name", () => {
+    assert.equal(tmpFilePath("sl-x"), tmpFilePath("sl-x"));
+  });
+
+  it("differs for different names", () => {
+    assert.notEqual(tmpFilePath("sl-a"), tmpFilePath("sl-b"));
+  });
+
+  it("keeps the name as prefix and appends only a filesystem-safe per-user suffix", () => {
+    const base = basename(tmpFilePath("sl-x"));
+    assert.match(base, /^sl-x(-[A-Za-z0-9_-]+)?$/, `unexpected tmp file name: ${base}`);
   });
 });

@@ -80,4 +80,4 @@ Not tested: refreshAll/refreshClaudeUsage/refreshCcclubRank (external API + keyc
 
 - Keep zero runtime dependencies
 - All formatting functions should be pure and tested
-- Cache files go to `<os.tmpdir()>/sl-*` (cross-platform: `/tmp` on Linux/macOS, `%TEMP%` on Windows), config to `~/.cc-costline/`
+- Cache files go to `<os.tmpdir()>/sl-*` (cross-platform: `/tmp` on Linux/macOS, `%TEMP%` on Windows), config to `~/.cc-costline/`. All `sl-*` names carry a per-user suffix (uid/username via `tmpFilePath()` in cache.ts) so Linux's shared `/tmp` can't collide across users — without it, the sticky bit would let one user's stale lock freeze another user's refresh forever.

@@ -66,7 +66,7 @@ cc-costline config --period both # Mostrar ambos períodos
    - **Costo local** → `~/.cc-costline/cache.json`
    - **Límites de uso** → `<os.tmpdir()>/sl-claude-usage`
    - **Ranking ccclub** → `<os.tmpdir()>/sl-ccclub-rank`
-3. Si alguna caché está obsoleta, `render` lanza un subproceso desacoplado `cc-costline refresh-bg` que actualiza los datos en segundo plano. `<os.tmpdir()>/sl-refresh.lock` evita actualizaciones concurrentes entre múltiples ventanas de Claude Code, y `<os.tmpdir()>/sl-refresh.last` limita los spawns a uno cada 30 s.
+3. Si alguna caché está obsoleta, `render` lanza un subproceso desacoplado `cc-costline refresh-bg` que actualiza los datos en segundo plano. `<os.tmpdir()>/sl-refresh.lock` evita actualizaciones concurrentes entre múltiples ventanas de Claude Code, y `<os.tmpdir()>/sl-refresh.last` limita los spawns a uno cada 30 s. Los nombres de archivo `sl-*` llevan un sufijo por usuario, evitando colisiones en un `/tmp` compartido de Linux.
 4. La actualización en segundo plano respeta los TTLs por fuente:
    - **Costo local** (TTL 2 min): escaneo incremental — caché por archivo (`mtime+size`), reutiliza entradas sin cambios (~25 ms típico vs ~2 s en frío con 1000+ archivos jsonl)
    - **Límites de uso** (retry 5 min, sensible al token): obtiene de `api.anthropic.com/api/oauth/usage`. Detecta la rotación del token OAuth para reintentar inmediatamente (nuevo token = nueva cuota de límite). Los datos obsoletos persisten ante fallos.

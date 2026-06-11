@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 
 /**
  * Atomic write: write to a unique temp file, then rename into place.
@@ -36,6 +36,29 @@ export function atomicWriteFileSync(path: string, content: string): void {
  */
 export function stripBom(s: string): string {
   return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
+}
+
+/**
+ * Per-user temp file path for the sl-* cache/lock files.
+ *
+ * os.tmpdir() is already per-user on Windows (%TEMP%) and macOS (/var/folders/…),
+ * but on Linux /tmp is SHARED across users. Fixed names like "sl-refresh.lock"
+ * then collide between users on the same host, and /tmp's sticky bit prevents
+ * deleting the other user's file — so the second user could never steal a stale
+ * lock and their refresh (usage, rank, pricing AND local cost) froze forever.
+ * Suffixing with uid (username fallback) gives each user an independent set.
+ */
+export function tmpFilePath(name: string): string {
+  let id = "";
+  try {
+    const ui = userInfo();
+    id = ui.uid !== -1 ? String(ui.uid) : ui.username;
+  } catch {
+    // No passwd entry (minimal containers) — fall back to env.
+    id = process.env.USER || process.env.USERNAME || "";
+  }
+  const suffix = id.replace(/[^A-Za-z0-9_-]/g, "");
+  return join(tmpdir(), suffix ? `${name}-${suffix}` : name);
 }
 
 const CACHE_DIR = join(homedir(), ".cc-costline");
