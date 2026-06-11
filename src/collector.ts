@@ -24,29 +24,38 @@ export interface CollectResult {
  * - A root read error (e.g., EACCES) throws so the caller can mark the scan failed and
  *   preserve cached cost. A nested directory that fails to read is skipped instead, so a
  *   single unreadable project can't freeze cost updates for all the readable ones.
+ * - `withFileTypes` saves one lstat syscall per entry; filesystems that report
+ *   DT_UNKNOWN (some network mounts) fall back to lstat per entry.
  */
 function findJsonlFiles(dir: string, isRoot = true): string[] {
   const results: string[] = [];
-  let entries: string[];
+  let entries;
   try {
-    entries = readdirSync(dir);
+    entries = readdirSync(dir, { withFileTypes: true });
   } catch (err: any) {
     if (err?.code === "ENOENT") return results;
     if (isRoot) throw err;
     return results;
   }
   for (const entry of entries) {
-    const full = join(dir, entry);
-    let stat;
-    try {
-      stat = lstatSync(full);
-    } catch {
-      continue;
+    const full = join(dir, entry.name);
+    let isLink = entry.isSymbolicLink();
+    let isDir = entry.isDirectory();
+    let isFile = entry.isFile();
+    if (!isLink && !isDir && !isFile) {
+      try {
+        const stat = lstatSync(full);
+        isLink = stat.isSymbolicLink();
+        isDir = stat.isDirectory();
+        isFile = stat.isFile();
+      } catch {
+        continue;
+      }
     }
-    if (stat.isSymbolicLink()) continue;
-    if (stat.isDirectory()) {
+    if (isLink) continue;
+    if (isDir) {
       results.push(...findJsonlFiles(full, false));
-    } else if (stat.isFile() && entry.endsWith(".jsonl")) {
+    } else if (isFile && entry.name.endsWith(".jsonl")) {
       results.push(full);
     }
   }
