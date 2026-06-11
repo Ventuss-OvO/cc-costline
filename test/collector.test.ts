@@ -217,6 +217,21 @@ describe("collectCosts", () => {
     assert.ok(Math.abs(result.cost7d - 0.0175) < 0.001, `expected ~0.0175, got ${result.cost7d}`);
   });
 
+  it("prices claude-fable-5 from the built-in table when no cloud table is loaded", () => {
+    const dir = join(tmpDir, "project");
+    mkdirSync(dir, { recursive: true });
+
+    // fable: input=$10/M, output=$50/M → 1000*10/1M + 500*50/1M = 0.01 + 0.025 = 0.035
+    const line = jsonlLine({
+      requestId: "fable1",
+      message: { model: "claude-fable-5", usage: { input_tokens: 1000, output_tokens: 500, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 } },
+    });
+    writeFileSync(join(dir, "session.jsonl"), line + "\n");
+
+    const result = collectCosts(tmpDir);
+    assert.ok(Math.abs(result.cost7d - 0.035) < 0.001, `expected ~0.035, got ${result.cost7d}`);
+  });
+
   it("does not falsely deduplicate entries without requestId that differ in model or cache tokens", () => {
     const dir = join(tmpDir, "project");
     mkdirSync(dir, { recursive: true });

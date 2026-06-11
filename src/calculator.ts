@@ -13,7 +13,12 @@ export type PricingTable = Record<string, ModelPricing>;
 // by a cloud table fetched from LiteLLM, which also covers non-Claude models that
 // Claude Code can route to via ANTHROPIC_BASE_URL.
 const BUILTIN_PRICING: PricingTable = {
+  // Fable family
+  "claude-fable-5":             { input: 10,  output: 50,  cacheCreation: 12.5,  cacheRead: 1    },
+
   // Opus family
+  "claude-opus-4-8":            { input: 5,   output: 25,  cacheCreation: 6.25,  cacheRead: 0.5  },
+  "claude-opus-4-7":            { input: 5,   output: 25,  cacheCreation: 6.25,  cacheRead: 0.5  },
   "claude-opus-4-6":            { input: 5,   output: 25,  cacheCreation: 6.25,  cacheRead: 0.5  },
   "claude-opus-4-5-20251101":   { input: 5,   output: 25,  cacheCreation: 6.25,  cacheRead: 0.5  },
   "claude-opus-4-1-20250805":   { input: 15,  output: 75,  cacheCreation: 18.75, cacheRead: 1.5  },
@@ -30,7 +35,8 @@ const BUILTIN_PRICING: PricingTable = {
 
 // Family fallbacks for unknown model IDs
 const FAMILY_FALLBACK: Record<string, ModelPricing> = {
-  opus:   BUILTIN_PRICING["claude-opus-4-6"],
+  fable:  BUILTIN_PRICING["claude-fable-5"],
+  opus:   BUILTIN_PRICING["claude-opus-4-8"],
   sonnet: BUILTIN_PRICING["claude-sonnet-4-5-20250929"],
   haiku:  BUILTIN_PRICING["claude-haiku-4-5-20251001"],
 };
