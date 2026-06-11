@@ -62,6 +62,20 @@ describe("render", () => {
     assert.ok(plain.includes("0%"), `should show 0%, got: ${plain}`);
   });
 
+  it("survives malformed field types without crashing", () => {
+    const input = JSON.stringify({
+      cost: { total_cost_usd: "not-a-number" },
+      model: { display_name: 42 },
+      context_window: { used_percentage: "95%" },
+      transcript_path: 123,
+    });
+    const plain = stripAnsi(render(input));
+
+    assert.ok(plain.includes("$0.00"), `non-numeric cost should fall back to $0.00, got: ${plain}`);
+    assert.ok(plain.includes("—"), `non-string model should fall back to —, got: ${plain}`);
+    assert.ok(plain.includes("0%"), `non-numeric context should fall back to 0%, got: ${plain}`);
+  });
+
   it("handles missing fields gracefully", () => {
     const input = JSON.stringify({});
     const output = render(input);

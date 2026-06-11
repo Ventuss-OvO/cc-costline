@@ -182,8 +182,12 @@ function cmdRefresh(): void {
 function cmdRender(): void {
   const input = readStdin();
   if (!input.trim()) return;
-  const output = render(input);
-  if (output) process.stdout.write(output);
+  try {
+    const output = render(input);
+    if (output) process.stdout.write(output);
+  } catch {
+    // The statusline must never surface a crash into Claude Code — blank beats noise.
+  }
 }
 
 async function cmdRefreshBg(args: string[]): Promise<void> {

@@ -202,11 +202,14 @@ export function render(input: string): string {
     return "";
   }
 
-  // Session data from Claude Code stdin
-  const cost = data.cost?.total_cost_usd ?? 0;
-  const model = (data.model?.display_name ?? "—").replace(/\s*\((\d+[KMB])\s+context\)/i, " ($1)");
-  const contextPct = Math.floor(data.context_window?.used_percentage ?? 0);
-  const transcriptPath = data.transcript_path ?? "";
+  // Session data from Claude Code stdin. Field types are coerced defensively —
+  // a statusline must render something sane even if a field arrives malformed.
+  const cost = numeric(data.cost?.total_cost_usd) ?? 0;
+  const model = typeof data.model?.display_name === "string"
+    ? data.model.display_name.replace(/\s*\((\d+[KMB])\s+context\)/i, " ($1)")
+    : "—";
+  const contextPct = Math.floor(numeric(data.context_window?.used_percentage) ?? 0);
+  const transcriptPath = typeof data.transcript_path === "string" ? data.transcript_path : "";
 
   const inputTokens = numeric(data.context_window?.total_input_tokens);
   const outputTokens = numeric(data.context_window?.total_output_tokens);
