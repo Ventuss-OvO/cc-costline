@@ -29,6 +29,15 @@ export function atomicWriteFileSync(path: string, content: string): void {
   }
 }
 
+/**
+ * Strip a leading UTF-8 BOM. Node never strips it on read, and JSON.parse
+ * rejects it — files saved by Windows editors (Notepad) and stdin piped
+ * through PowerShell 5.x both arrive BOM-prefixed.
+ */
+export function stripBom(s: string): string {
+  return s.charCodeAt(0) === 0xfeff ? s.slice(1) : s;
+}
+
 const CACHE_DIR = join(homedir(), ".cc-costline");
 
 export interface FileCostEntry {
@@ -59,7 +68,7 @@ export interface ConfigData {
 export function readCache(dir?: string): CacheData | null {
   try {
     const raw = readFileSync(join(dir || CACHE_DIR, "cache.json"), "utf-8");
-    return JSON.parse(raw) as CacheData;
+    return JSON.parse(stripBom(raw)) as CacheData;
   } catch {
     return null;
   }
@@ -76,7 +85,7 @@ const VALID_PERIODS: ReadonlyArray<ConfigData["period"]> = ["7d", "30d", "both"]
 export function readConfig(dir?: string): ConfigData {
   try {
     const raw = readFileSync(join(dir || CACHE_DIR, "config.json"), "utf-8");
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(stripBom(raw));
     const period = parsed?.period;
     if (VALID_PERIODS.includes(period)) return { period };
     return { period: "7d" };

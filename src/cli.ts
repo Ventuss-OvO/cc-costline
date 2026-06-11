@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 import { collectCosts } from "./collector.js";
-import { readCache, writeCache, writeConfig, readConfig, atomicWriteFileSync, CACHE_DIR } from "./cache.js";
+import { readCache, writeCache, writeConfig, readConfig, atomicWriteFileSync, stripBom, CACHE_DIR } from "./cache.js";
 import { render } from "./statusline.js";
 import { refreshAll, loadPricingTable } from "./refresh.js";
 
@@ -22,7 +22,8 @@ function readSettings(): any {
   if (!existsSync(SETTINGS_PATH)) return {};
   const raw = readFileSync(SETTINGS_PATH, "utf-8");
   try {
-    return JSON.parse(raw);
+    // Tolerate a UTF-8 BOM — Windows editors commonly save settings.json with one.
+    return JSON.parse(stripBom(raw));
   } catch {
     console.error(`✗ Failed to parse ${SETTINGS_PATH} — aborting to avoid overwriting your config.`);
     console.error("  Please fix the JSON syntax and retry.");

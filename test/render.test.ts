@@ -25,6 +25,16 @@ describe("render", () => {
     assert.equal(render(""), "");
   });
 
+  it("tolerates a UTF-8 BOM before the stdin JSON (PowerShell pipes)", () => {
+    const input = "\uFEFF" + JSON.stringify({
+      cost: { total_cost_usd: 1.5 },
+      model: { display_name: "Test" },
+      context_window: { used_percentage: 10 },
+    });
+    const plain = stripAnsi(render(input));
+    assert.ok(plain.includes("$1.50"), `should render despite BOM, got: "${plain}"`);
+  });
+
   it("renders basic session data", () => {
     const input = JSON.stringify({
       cost: { total_cost_usd: 2.42 },

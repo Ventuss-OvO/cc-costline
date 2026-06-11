@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { readCache, writeCache, atomicWriteFileSync } from "./cache.js";
+import { readCache, writeCache, atomicWriteFileSync, stripBom } from "./cache.js";
 import { collectCosts } from "./collector.js";
 import { shouldRefreshLocalCostCache, usesThirdPartyApi } from "./statusline.js";
 import { parseLiteLLMPricing } from "./calculator.js";
@@ -280,7 +280,7 @@ function loadAccessToken(nowMs: number): string {
     const credentialsJSON = load();
     if (!credentialsJSON) continue;
     try {
-      const credentials = JSON.parse(credentialsJSON);
+      const credentials = JSON.parse(stripBom(credentialsJSON));
       const token = credentials.claudeAiOauth?.accessToken || "";
       if (!token) continue;
       const expiresAt = credentials.claudeAiOauth?.expiresAt;
@@ -449,7 +449,8 @@ async function refreshCcclubRank(): Promise<void> {
 
   let config: any;
   try {
-    config = JSON.parse(readFileSync(configPath, "utf-8"));
+    // User-edited file — tolerate a UTF-8 BOM like the other JSON read paths.
+    config = JSON.parse(stripBom(readFileSync(configPath, "utf-8")));
   } catch {
     return;
   }

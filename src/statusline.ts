@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync, statSync, utimesSync } from "n
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { readCache, readConfig } from "./cache.js";
+import { readCache, readConfig, stripBom } from "./cache.js";
 import type { CacheData } from "./cache.js";
 
 // TTL for local cost cache (2 minutes) — used by refresh-bg to decide whether to rescan jsonl
@@ -198,7 +198,8 @@ function maybeSpawnRefresh(transcriptPath: string): void {
 export function render(input: string): string {
   let data: any;
   try {
-    data = JSON.parse(input);
+    // BOM-prefixed stdin (e.g. piped through PowerShell 5.x) must not blank the line.
+    data = JSON.parse(stripBom(input));
   } catch {
     return "";
   }

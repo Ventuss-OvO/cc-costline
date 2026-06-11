@@ -26,6 +26,13 @@ describe("readCache", () => {
     writeFileSync(join(tmpDir, "cache.json"), "not json");
     assert.equal(readCache(tmpDir), null);
   });
+
+  it("tolerates a UTF-8 BOM (Windows editors)", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const data = { cost7d: 1.5, cost30d: 3, updatedAt: "2026-06-11T00:00:00.000Z" };
+    writeFileSync(join(tmpDir, "cache.json"), "\uFEFF" + JSON.stringify(data));
+    assert.deepEqual(readCache(tmpDir), data);
+  });
 });
 
 describe("writeCache + readCache roundtrip", () => {
@@ -73,5 +80,11 @@ describe("writeConfig + readConfig roundtrip", () => {
     mkdirSync(tmpDir, { recursive: true });
     writeFileSync(join(tmpDir, "config.json"), JSON.stringify({ other: "field" }));
     assert.deepEqual(readConfig(tmpDir), { period: "7d" });
+  });
+
+  it("tolerates a UTF-8 BOM (Windows editors)", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    writeFileSync(join(tmpDir, "config.json"), "\uFEFF" + JSON.stringify({ period: "30d" }));
+    assert.deepEqual(readConfig(tmpDir), { period: "30d" });
   });
 });
