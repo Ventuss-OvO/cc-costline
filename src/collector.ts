@@ -168,7 +168,10 @@ export function collectCosts(
 
     let entry: FileCostEntry | null;
     const cached = prev[file];
-    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+    // byDay sanity check: a corrupted cache entry must fall through to a fresh
+    // parse instead of throwing in the pruning loop and freezing cache updates.
+    if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size
+        && cached.byDay && typeof cached.byDay === "object") {
       // Prune day buckets that have slid past the 30d window to keep cache from growing
       const pruned: Record<string, number> = {};
       for (const [day, cost] of Object.entries(cached.byDay)) {

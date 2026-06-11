@@ -352,6 +352,20 @@ describe("collectCosts", () => {
     assert.equal(entry.byDay[ancientDay], undefined, "ancient day should be pruned");
   });
 
+  it("re-parses instead of throwing when a cached entry has a corrupted byDay", () => {
+    const dir = join(tmpDir, "project");
+    mkdirSync(dir, { recursive: true });
+    const filePath = join(dir, "session.jsonl");
+    writeFileSync(filePath, jsonlLine({ requestId: "r1" }) + "\n");
+    const stat = statSync(filePath);
+
+    // mtime+size match so the entry would be "reusable", but byDay is poisoned.
+    const prev = { [filePath]: { mtimeMs: stat.mtimeMs, size: stat.size, byDay: null } } as any;
+    const result = collectCosts(tmpDir, prev);
+    assert.equal(result.ok, true);
+    assert.ok(Math.abs(result.cost7d - 0.0105) < 0.001, `expected fresh-parse cost, got ${result.cost7d}`);
+  });
+
   it("includes cache token costs", () => {
     const dir = join(tmpDir, "project");
     mkdirSync(dir, { recursive: true });

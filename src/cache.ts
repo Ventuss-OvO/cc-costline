@@ -91,7 +91,15 @@ export interface ConfigData {
 export function readCache(dir?: string): CacheData | null {
   try {
     const raw = readFileSync(join(dir || CACHE_DIR, "cache.json"), "utf-8");
-    return JSON.parse(stripBom(raw)) as CacheData;
+    const parsed: any = JSON.parse(stripBom(raw));
+    // Shape-validate like the temp caches do: a hand-edited or corrupted
+    // cache.json must read as "no cache yet", not crash render() when it
+    // calls formatCost() on a non-number.
+    if (!parsed || typeof parsed !== "object") return null;
+    if (typeof parsed.cost7d !== "number" || !isFinite(parsed.cost7d)) return null;
+    if (typeof parsed.cost30d !== "number" || !isFinite(parsed.cost30d)) return null;
+    if (typeof parsed.updatedAt !== "string") return null;
+    return parsed as CacheData;
   } catch {
     return null;
   }

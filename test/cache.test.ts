@@ -33,6 +33,23 @@ describe("readCache", () => {
     writeFileSync(join(tmpDir, "cache.json"), "\uFEFF" + JSON.stringify(data));
     assert.deepEqual(readCache(tmpDir), data);
   });
+
+  it("returns null for corrupted shapes instead of letting render crash", () => {
+    mkdirSync(tmpDir, { recursive: true });
+    const bad = [
+      '{"cost7d":"abc","cost30d":1,"updatedAt":"x"}', // non-numeric cost
+      '{"cost7d":1,"cost30d":null,"updatedAt":"x"}',  // null cost
+      '{"cost7d":1e999,"cost30d":1,"updatedAt":"x"}', // Infinity
+      '{"cost7d":1,"cost30d":2}',                     // updatedAt missing
+      '[1,2,3]',
+      '"just a string"',
+      'null',
+    ];
+    for (const raw of bad) {
+      writeFileSync(join(tmpDir, "cache.json"), raw);
+      assert.equal(readCache(tmpDir), null, `should reject: ${raw}`);
+    }
+  });
 });
 
 describe("writeCache + readCache roundtrip", () => {
