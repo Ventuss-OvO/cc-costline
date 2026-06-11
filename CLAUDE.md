@@ -29,10 +29,9 @@ src/
 ├── calculator.ts   # Cloud (LiteLLM, official-only) + built-in pricing, cost calculation
 └── cache.ts        # Read/write cost cache and config (~/.cc-costline/)
 test/
-├── statusline.test.ts  # Unit tests for pure formatting/color functions
-├── calculator.test.ts  # Unit tests for pricing lookup and cost calculation
 ├── cache.test.ts       # Cache/config read/write roundtrip tests
 ├── collector.test.ts   # Cost collection with mock jsonl files + incremental scan
+├── refresh.test.ts     # Pure parsers + ownership-verified lock primitives
 └── render.test.ts      # Render output format and edge cases
 ```
 
@@ -69,9 +68,7 @@ test/
 
 ## Tests
 
-134 tests across 6 files:
-- `statusline.test.ts`: formatTokens, formatCost, ctxColor, formatCountdown, rankColor, shouldRefreshLocalCostCache, usesThirdPartyApi (env-based third-party detection)
-- `calculator.test.ts`: getPricing (exact/family/unknown fallback + cloud table, provider-prefix/date-snapshot normalization), parseLiteLLMPricing (per-million conversion, cache-cost fallback, sample_spec/unpriced skip, official-only allowlist filtering), calculateCost
+84 tests across 4 files:
 - `cache.test.ts`: readCache/writeCache/readConfig/writeConfig roundtrip, missing file, invalid JSON
 - `collector.test.ts`: collectCosts with mock jsonl — dedup (with/without requestId), 7d/30d split, nested dirs, cache tokens, model pricing, error handling, incremental scan (cache reuse, mtime change re-parse, 30d mtime skip, day-bucket pruning, files map shape)
 - `render.test.ts`: render() output format, edge cases, stdin token totals, transcript token fallback, ANSI colors, period=both. Sets `CC_COSTLINE_NO_SPAWN=1` to disable background spawn during tests.
