@@ -11,6 +11,7 @@ import {
   rankColor,
   shouldRefreshLocalCostCache,
 } from "../dist/statusline.js";
+import { PRICING_VERSION } from "../dist/calculator.js";
 
 describe("formatTokens", () => {
   it("formats millions", () => {
@@ -149,11 +150,36 @@ describe("shouldRefreshLocalCostCache", () => {
         cost7d: 1,
         cost30d: 2,
         updatedAt: new Date(now.getTime() - 5_000).toISOString(),
+        pricingVersion: PRICING_VERSION,
       };
 
       assert.equal(shouldRefreshLocalCostCache(cache, transcriptPath, now.getTime()), false);
     } finally {
       rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("refreshes a TTL-fresh cache computed under an older pricing version", () => {
+    const now = Date.now();
+    const fresh = {
+      cost7d: 1,
+      cost30d: 2,
+      updatedAt: new Date(now - 5_000).toISOString(),
+    };
+
+    // Legacy cache with no pricingVersion at all
+    assert.equal(shouldRefreshLocalCostCache(fresh, "", now), true);
+
+    // Cache written under an older version
+    assert.equal(
+      shouldRefreshLocalCostCache({ ...fresh, pricingVersion: PRICING_VERSION - 1 }, "", now),
+      true,
+    );
+
+    // Current version, still within TTL → no refresh
+    assert.equal(
+      shouldRefreshLocalCostCache({ ...fresh, pricingVersion: PRICING_VERSION }, "", now),
+      false,
+    );
   });
 });

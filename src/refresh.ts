@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
 import { readCache, writeCache } from "./cache.js";
+import { PRICING_VERSION } from "./calculator.js";
 import { collectCosts } from "./collector.js";
 import { shouldRefreshLocalCostCache } from "./statusline.js";
 
@@ -53,7 +54,10 @@ function refreshLocalCost(transcriptPath: string): void {
   const cache = readCache();
   if (!shouldRefreshLocalCostCache(cache, transcriptPath)) return;
   try {
-    const result = collectCosts(undefined, cache?.files);
+    // Per-file buckets computed under an older pricing table can't be reused —
+    // drop them and re-parse everything once.
+    const prevFiles = cache?.pricingVersion === PRICING_VERSION ? cache.files : undefined;
+    const result = collectCosts(undefined, prevFiles);
     // Keep stale data only when the scan itself failed. A successful scan that
     // returns zero should clear old rolling-window totals.
     if (!result.scanFailed || !cache) {
@@ -62,6 +66,7 @@ function refreshLocalCost(transcriptPath: string): void {
         cost30d: result.cost30d,
         updatedAt: new Date().toISOString(),
         files: result.files,
+        pricingVersion: PRICING_VERSION,
       });
     }
   } catch {}

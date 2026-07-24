@@ -9,6 +9,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf-8"));
 import { collectCosts } from "./collector.js";
 import { readCache, writeCache, writeConfig, readConfig, CACHE_DIR } from "./cache.js";
+import { PRICING_VERSION } from "./calculator.js";
 import { render } from "./statusline.js";
 import { refreshAll } from "./refresh.js";
 
@@ -144,12 +145,15 @@ function cmdConfig(args: string[]): void {
 
 function cmdRefresh(): void {
   const prev = readCache();
-  const result = collectCosts(undefined, prev?.files);
+  // Per-file buckets from an older pricing table can't be reused — see PRICING_VERSION.
+  const prevFiles = prev?.pricingVersion === PRICING_VERSION ? prev.files : undefined;
+  const result = collectCosts(undefined, prevFiles);
   writeCache({
     cost7d: result.cost7d,
     cost30d: result.cost30d,
     updatedAt: new Date().toISOString(),
     files: result.files,
+    pricingVersion: PRICING_VERSION,
   });
   console.log(
     `✓ Cache updated — 7d: $${result.cost7d.toFixed(2)} | 30d: $${result.cost30d.toFixed(2)}`

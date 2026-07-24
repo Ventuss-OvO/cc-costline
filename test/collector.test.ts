@@ -361,4 +361,93 @@ describe("collectCosts", () => {
     const result = collectCosts(tmpDir);
     assert.ok(Math.abs(result.cost7d - 0.0525) < 0.001, `expected ~0.0525, got ${result.cost7d}`);
   });
+
+  it("bills the 1h portion of a cache write at the higher rate", () => {
+    const dir = join(tmpDir, "project");
+    mkdirSync(dir, { recursive: true });
+
+    // opus 1h cache write = $10/M → 100000 * 10 / 1M = $1.00
+    // (the flat 5m rate would only be $0.625)
+    const line = jsonlLine({
+      requestId: "cache1h",
+      message: {
+        model: "claude-opus-5",
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 100000,
+          cache_read_input_tokens: 0,
+          cache_creation: { ephemeral_1h_input_tokens: 100000, ephemeral_5m_input_tokens: 0 },
+        },
+      },
+    });
+    writeFileSync(join(dir, "session.jsonl"), line + "\n");
+
+    const result = collectCosts(tmpDir);
+    assert.ok(Math.abs(result.cost7d - 1) < 0.001, `expected ~1.00, got ${result.cost7d}`);
+  });
+
+  it("falls back to the 5m rate when the transcript has no cache_creation breakdown", () => {
+    const dir = join(tmpDir, "project");
+    mkdirSync(dir, { recursive: true });
+
+    const line = jsonlLine({
+      requestId: "nobreakdown",
+      message: {
+        model: "claude-opus-5",
+        usage: {
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_creation_input_tokens: 100000,
+          cache_read_input_tokens: 0,
+        },
+      },
+    });
+    writeFileSync(join(dir, "session.jsonl"), line + "\n");
+
+    const result = collectCosts(tmpDir);
+    assert.ok(Math.abs(result.cost7d - 0.625) < 0.001, `expected ~0.625, got ${result.cost7d}`);
+  });
+
+  it("applies fast-mode pricing from usage.speed", () => {
+    const dir = join(tmpDir, "project");
+    mkdirSync(dir, { recursive: true });
+
+    // opus 5 fast: input $10/M, output $50/M → 1000*10/1M + 500*50/1M = 0.01 + 0.025 = 0.035
+    const line = jsonlLine({
+      requestId: "fast1",
+      message: {
+        model: "claude-opus-5",
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 500,
+          cache_creation_input_tokens: 0,
+          cache_read_input_tokens: 0,
+          speed: "fast",
+        },
+      },
+    });
+    writeFileSync(join(dir, "session.jsonl"), line + "\n");
+
+    const result = collectCosts(tmpDir);
+    assert.ok(Math.abs(result.cost7d - 0.035) < 0.001, `expected ~0.035, got ${result.cost7d}`);
+  });
+
+  it("prices fable 5 entries at the fable tier", () => {
+    const dir = join(tmpDir, "project");
+    mkdirSync(dir, { recursive: true });
+
+    // fable: input $10/M, output $50/M → 1000*10/1M + 500*50/1M = 0.035
+    const line = jsonlLine({
+      requestId: "fable1",
+      message: {
+        model: "claude-fable-5",
+        usage: { input_tokens: 1000, output_tokens: 500, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+      },
+    });
+    writeFileSync(join(dir, "session.jsonl"), line + "\n");
+
+    const result = collectCosts(tmpDir);
+    assert.ok(Math.abs(result.cost7d - 0.035) < 0.001, `expected ~0.035, got ${result.cost7d}`);
+  });
 });

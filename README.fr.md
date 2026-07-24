@@ -78,15 +78,25 @@ cc-costline config --period both # Afficher les deux périodes
 
 Prix par million de tokens (USD) :
 
-| Modèle | Entrée | Sortie | Écriture cache | Lecture cache |
-|--------|-------:|-------:|---------------:|--------------:|
-| Opus 4.6 | 5 $ | 25 $ | 6,25 $ | 0,50 $ |
-| Opus 4.5 | 5 $ | 25 $ | 6,25 $ | 0,50 $ |
-| Opus 4.1 | 15 $ | 75 $ | 18,75 $ | 1,50 $ |
-| Sonnet 4.5 | 3 $ | 15 $ | 3,75 $ | 0,30 $ |
-| Sonnet 4 | 3 $ | 15 $ | 3,75 $ | 0,30 $ |
-| Haiku 4.5 | 1 $ | 5 $ | 1,25 $ | 0,10 $ |
-| Haiku 3.5 | 0,80 $ | 4 $ | 1,00 $ | 0,08 $ |
+| Modèle | Entrée | Sortie | Écriture cache (5 min) | Écriture cache (1 h) | Lecture cache |
+|--------|-------:|-------:|-----------------------:|---------------------:|--------------:|
+| Fable 5 / Mythos 5 | 10 $ | 50 $ | 12,50 $ | 20 $ | 1,00 $ |
+| Opus 5 / 4.8 / 4.7 / 4.6 / 4.5 | 5 $ | 25 $ | 6,25 $ | 10 $ | 0,50 $ |
+| Opus 4.1 / 4 | 15 $ | 75 $ | 18,75 $ | 30 $ | 1,50 $ |
+| Sonnet 5 / 4.6 / 4.5 / 4 | 3 $ | 15 $ | 3,75 $ | 6 $ | 0,30 $ |
+| Haiku 4.5 | 1 $ | 5 $ | 1,25 $ | 2 $ | 0,10 $ |
+| Haiku 3.5 | 0,80 $ | 4 $ | 1,00 $ | 1,60 $ | 0,08 $ |
+
+Les écritures de cache sont facturées selon leur TTL : 1,25x l'entrée pour 5 minutes,
+2x pour 1 heure. La répartition provient de `usage.cache_creation` dans la
+transcription ; les anciennes transcriptions sans ce champ sont facturées
+intégralement au tarif 5 minutes.
+
+Le mode rapide (`usage.speed: "fast"`, Opus 5 / 4.8) est facturé 2x le tarif standard.
+
+Sonnet 5 est indiqué à son tarif standard de 3 $/15 $ ; le tarif de lancement de
+2 $/10 $ court jusqu'au 31/08/2026, donc les coûts Sonnet 5 sont légèrement
+surestimés d'ici là.
 
 Les modèles inconnus utilisent le prix de leur famille, Sonnet par défaut.
 

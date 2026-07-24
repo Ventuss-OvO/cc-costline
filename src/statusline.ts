@@ -1,6 +1,7 @@
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { readCache, readConfig } from "./cache.js";
+import { PRICING_VERSION } from "./calculator.js";
 import type { CacheData } from "./cache.js";
 
 // TTL for local cost cache (2 minutes) — used by refresh-bg to decide whether to rescan jsonl
@@ -58,6 +59,9 @@ export function shouldRefreshLocalCostCache(
   now = Date.now(),
 ): boolean {
   if (!cache) return true;
+
+  // Costs computed under an older pricing table are wrong regardless of TTL.
+  if (cache.pricingVersion !== PRICING_VERSION) return true;
 
   const cacheUpdatedAt = new Date(cache.updatedAt).getTime();
   if (isNaN(cacheUpdatedAt)) return true;

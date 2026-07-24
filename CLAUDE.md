@@ -59,18 +59,23 @@ test/
 - **Split TTLs**: Local cost 2 min, Anthropic usage 5 min (rate-limited), ccclub rank 90 s (self-hosted, no strict limit). Local cost cache also refreshes immediately when transcript mtime is newer than cache.
 - **Token-aware retry**: Usage API cache tracks the OAuth token prefix; when Claude Code rotates the token, retry fires immediately (new token = fresh rate limit quota)
 - **Resilient stale fallback**: API failures never overwrite cached data; `lastAttempt` is updated separately from `data`, so stale data persists across any number of failures. Local cost cache only keeps stale data when the scan itself fails; a successful zero-cost scan clears old totals.
-- **Model name shortening**: `display_name` is shortened (e.g. "Opus 4.6 (1M context)" → "Opus 4.6 (1M)")
+- **Model name shortening**: `display_name` is shortened (e.g. "Opus 5 (1M context)" → "Opus 5 (1M)")
+- **TTL-aware cache pricing**: cache writes are billed by TTL — 5-minute at 1.25x input, 1-hour at 2x. `collector.ts` passes `usage.cache_creation.ephemeral_1h_input_tokens` to `calculateCost`, which splits the flat `cache_creation_input_tokens` total accordingly (clamped, since the two fields can disagree). In practice ~90% of Claude Code cache writes are 1h, so pricing everything at the 5m rate materially undercounts.
+- **Derived cache rates**: `MODEL_PRICING` entries are built by `p(input, output)`; the three cache rates are fixed multiples of input (1.25x / 2x / 0.1x) across every model, so there is one number pair to maintain per model.
+- **Fast mode**: `usage.speed === "fast"` doubles the rate, but only on fast-capable models (Opus 5 / 4.8) — `speed` is ignored elsewhere.
+- **Sonnet 5 intro pricing**: listed at the standard $3/$15, not the $2/$10 promo running through 2026-08-31. Keeps the table correct after the promo ends, at the cost of reading slightly high until then; adding a date dimension to a pure pricing function isn't worth a 5-week window.
+- **`PRICING_VERSION` invalidates the incremental cache**: because per-file `byDay` buckets are reused whenever mtime+size are unchanged, a pricing edit would otherwise never reach files that haven't been written since — the statusline would keep showing old numbers indefinitely. `cache.json` records the version it was computed under; a mismatch makes `shouldRefreshLocalCostCache` return true regardless of TTL and makes `refreshLocalCost` drop `prevFiles` for one full re-parse. **Bump `PRICING_VERSION` in `calculator.ts` whenever the table or the cost formula changes.**
 - **No User-Agent header**: The Anthropic usage API rate-limits requests with `claude-code` User-Agent
 - **Deduplication**: Token cost collection deduplicates by requestId per file; fallback key includes model + all token types to avoid false dedup. No cross-file dedup (jsonl files map 1:1 to sessions; cross-file `sessionId:requestId` collisions don't occur in practice).
 - **Safe settings**: `readSettings()` aborts if `settings.json` exists but is invalid JSON, preventing config wipe
 
 ## Tests
 
-69 tests across 5 files:
-- `statusline.test.ts`: formatTokens, formatCost, ctxColor, formatCountdown, rankColor, shouldRefreshLocalCostCache
-- `calculator.test.ts`: getPricing (exact/family/unknown fallback), calculateCost
+85 tests across 5 files:
+- `statusline.test.ts`: formatTokens, formatCost, ctxColor, formatCountdown, rankColor, shouldRefreshLocalCostCache (incl. pricing-version invalidation)
+- `calculator.test.ts`: getPricing (exact/family/unknown fallback, fable tier, current opus lineup, legacy opus rates, derived cache rates, fast mode), calculateCost (1h vs 5m cache split, clamping, fast mode)
 - `cache.test.ts`: readCache/writeCache/readConfig/writeConfig roundtrip, missing file, invalid JSON
-- `collector.test.ts`: collectCosts with mock jsonl — dedup (with/without requestId), 7d/30d split, nested dirs, cache tokens, model pricing, error handling, incremental scan (cache reuse, mtime change re-parse, 30d mtime skip, day-bucket pruning, files map shape)
+- `collector.test.ts`: collectCosts with mock jsonl — dedup (with/without requestId), 7d/30d split, nested dirs, cache tokens, 1h cache rate + no-breakdown fallback, `usage.speed` fast mode, fable pricing, model pricing, error handling, incremental scan (cache reuse, mtime change re-parse, 30d mtime skip, day-bucket pruning, files map shape)
 - `render.test.ts`: render() output format, edge cases, stdin token totals, transcript token fallback, ANSI colors, period=both. Sets `CC_COSTLINE_NO_SPAWN=1` to disable background spawn during tests.
 
 Not tested: refreshAll/refreshClaudeUsage/refreshCcclubRank (external API + keychain + lockfile), CLI commands (hardcoded paths).

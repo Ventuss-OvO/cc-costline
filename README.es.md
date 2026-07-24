@@ -78,15 +78,25 @@ cc-costline config --period both # Mostrar ambos períodos
 
 Precios por millón de tokens (USD):
 
-| Modelo | Entrada | Salida | Escritura caché | Lectura caché |
-|--------|--------:|-------:|----------------:|--------------:|
-| Opus 4.6 | $5 | $25 | $6.25 | $0.50 |
-| Opus 4.5 | $5 | $25 | $6.25 | $0.50 |
-| Opus 4.1 | $15 | $75 | $18.75 | $1.50 |
-| Sonnet 4.5 | $3 | $15 | $3.75 | $0.30 |
-| Sonnet 4 | $3 | $15 | $3.75 | $0.30 |
-| Haiku 4.5 | $1 | $5 | $1.25 | $0.10 |
-| Haiku 3.5 | $0.80 | $4 | $1.00 | $0.08 |
+| Modelo | Entrada | Salida | Escritura caché (5 min) | Escritura caché (1 h) | Lectura caché |
+|--------|--------:|-------:|------------------------:|----------------------:|--------------:|
+| Fable 5 / Mythos 5 | $10 | $50 | $12.50 | $20 | $1.00 |
+| Opus 5 / 4.8 / 4.7 / 4.6 / 4.5 | $5 | $25 | $6.25 | $10 | $0.50 |
+| Opus 4.1 / 4 | $15 | $75 | $18.75 | $30 | $1.50 |
+| Sonnet 5 / 4.6 / 4.5 / 4 | $3 | $15 | $3.75 | $6 | $0.30 |
+| Haiku 4.5 | $1 | $5 | $1.25 | $2 | $0.10 |
+| Haiku 3.5 | $0.80 | $4 | $1.00 | $1.60 | $0.08 |
+
+Las escrituras de caché se facturan según su TTL: 1.25x la entrada para 5 minutos,
+2x para 1 hora. El desglose proviene de `usage.cache_creation` en la transcripción;
+las transcripciones antiguas sin ese campo se facturan por completo a la tarifa de
+5 minutos.
+
+El modo rápido (`usage.speed: "fast"`, Opus 5 / 4.8) se factura a 2x la tarifa estándar.
+
+Sonnet 5 aparece con su tarifa estándar de $3/$15; el precio introductorio de $2/$10
+está vigente hasta el 31/08/2026, por lo que hasta entonces los costos de Sonnet 5
+se muestran ligeramente altos.
 
 Los modelos desconocidos usan el precio de su familia, Sonnet por defecto.
 

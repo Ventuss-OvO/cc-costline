@@ -19,6 +19,9 @@ export interface CacheData {
   updatedAt: string;
   // Optional: per-file scan cache for incremental collectCosts. Absent in legacy cache.
   files?: Record<string, FileCostEntry>;
+  // PRICING_VERSION the cached costs were computed under. Absent in legacy cache,
+  // which reads as a mismatch and triggers a full re-scan.
+  pricingVersion?: number;
 }
 
 export interface ConfigData {
